@@ -1,0 +1,1593 @@
+---
+title: "QC Module"
+author: "Carolina Camargo"
+date: "April 24, 2018"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+The below functions were made to apply QC to tide gauge stations. 
+Up until the moment, the functions can be applied to any sea level time series. To be applied in a big database, some modifications to improve the processing time are still necessary. 
+
+The QC module is divided in 5 sub-modules: Breakpoints Detection, Stability Check, Outlier Detection, Speed of Change Check and Spike Detection.  
+In each sub-module the data passes by at least one filter, and parameters can be modified in each sub-module.  
+The main function is the QCmodule, which combines all the sub-modules and filters, and allows for filters and sub-modules to be turn on/off.  
+After each filter, a flag is created, with 0 for suspected and removed values, and 1 for values that passed the filter.  
+A hourly filter function is also presented here, although this function is used for the Tidal  Module.   
+Each sub-module can also be applied separately to the dataset (instead of using the QCmodule function).  
+
+#### Table of Functions:
+1. breakpoint  
+2. global_outlier  
+3. hourly_filter
+4. lunartable  
+5. medfilt  
+6. out_of_range  
+7. outlier_gloss  
+8. outlier_mod  
+9. QCmodule  
+10. speed_change  
+11. spike  
+12. splinefilt  
+13. stability_check  
+14. station_map  
+
+#### Calling necessary libraries
+```{r Libraries,message=FALSE}
+library(dplyr); library(lunar); library(changepoint); library(zoo); library(fractal); library(tseries); library(ggplot2);library(timeDate)
+```
+
+## Breakpoint Function 
+
+#### Description:  
+
+Function that identifies changes in the timeseries. After change point identification, the time series is sliced in sets according to the changepoints, and then the mean is calculated for each set and removed from the data.  
+The result is a mean referenced sea level. 
+
+#### Usage:
+
+breakpoint(v,t,method2 ="BinSeg",type="mean") 
+
+#### Arguments:
+
+**v**: vector with level of the time series.  
+**t**: time vector of the time series (has the same length as v).  
+**method2**: method to identify the changepoints. Default: *Binseg*. Choice betwen: "PELT", "AMOC", "SegNeigh"or "BinSeg".  Given the size of the time series, BinSeg is recommendable to reduce computational cost.  
+**type**: Choose if the changepoint idenitification is made regarding the mean, variance or both. Default: *mean* Choice between "mean" , "var" or "meanvar". 
+
+#### Details:  
+
+Function that looks for changes within the time series.    
+A time series is considered to have a changepoint if, after a determined time *t*, the time series can be divided in two subsets (until *t*, after *t*), with different statistical properties, such as mean and variance (Killick & Eckley, 2014).  
+The function uses the R package **changepoint** for identification of the changepoints. For more information on the methods, please refer to Killick et al (2016).  
+Function that identifies changepoints in the timeseries. After changepoint identification, the time series is sliced in sets according to the changepoints, and then the mean is calculated for each set and removed from the data.  
+The result is a mean referenced sea level, with the signals "alligned" around 0.  
+This is acceptable for Tide Gauge Sea Level measurements, because the resulting time series is already a relative measurement. However, this step should be applied with attention if other sources of sea level measurements are being used.  
+
+#### Value: 
+
+**chpt**: location of the changepoints.   
+**flag**: vector same size of v, with 1 for the position where change happens, and 0 for the rest.  
+**changelevel**: vector same size of v, with only values where change happened (rest NA) (useful for visualization).  
+**changetime**: vector with the time of the changes (same length as chpt).  
+**level**: level vectors after the mean correction.  
+**time**: time vector (same as t).  
+
+#### Requirements:
+
+This function requires the R packages: changepoint(Killick et al, 2016), dplyr (Wickham, 2017).
+
+
+#### References:
+
+Killick, R., Eckley, I. A. (2014). changepoint: An **R** Package for Changepoint Analysis. *Journal of Statistical Software*, Vol 58, issue 3.  
+
+Killick, R., Haynes, K., Eckley, I., Fearnhead, P., Lee, J. (2016). changepoint: Methods for Changepoint Detection. URL: https://github.com/rkillick/changepoint/ . 
+
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .  
+
+
+```{r Breakpoint function, message=FALSE,echo=FALSE}
+breakpoint <- function(v,t,method2 ="BinSeg",type="mean"){
+
+  if(any(v==-999,na.rm = T)){
+    v = ifelse (v==-999, NA, v)}
+  
+  if ( ( all(is.na(v)) | (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  if ( ( all(is.na(v)) & (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  
+  vt <- data.frame(t,v)
+  vt <- dplyr::mutate(vt,year = format(t,"%Y"))
+
+  year2<-levels(factor(vt$year))
+
+  chptf = NULL; newlevel = NULL; changetime=NULL; flag =NULL;levelf=NULL;timef=NULL
+    #  output <- NULL
+    for (j in 1:length(year2)){
+      v2 <- dplyr::filter(vt,vt$year==year2[j])
+      if (type=="mean"){
+        x.bs <- changepoint::cpt.mean(na.locf(v2$v),method = method2)
+      }
+      if (type=="var"){
+        x.bs <- changepoint::cpt.var(na.locf(v2$v),method = method2)
+      }
+      if (type=="meanvar"){
+        x.bs <- changepoint::cpt.meanvar(na.locf(v2$v),method = method2)
+      }
+      chpt <- cpts(x.bs)
+      rm(x.bs)
+      if(length(chpt)==0){
+        if (type=="mean"){ #we used first only mean, and didnt find anything. So we change the method
+          x.bs <- changepoint::cpt.meanvar(na.locf(v2$v),method = method2)
+          chptmeanvar <- cpts(x.bs)
+          rm(x.bs)
+          if (length(chptmeanvar)==0){ #If still there wasnt any breakpoint, we change again the method
+            x.bs <- changepoint::cpt.var(na.locf(v2$v),method = method2)
+            chptvar <- cpts(x.bs)
+            rm(x.bs)
+            if (length(chptvar)==0){ #test the last method
+              #If the thrid trial is still empty, return the function
+              message("No Breakpoint identified")
+              return(list(level=v,time=t))
+            }else{   message ("Warning: Requested Type might been changed, because the type 'mean' was not finding a breakpoint.
+               Type used was 'var' ")
+              chpt = chptvar}
+          }else{   message ("Warning: Requested Type might been changed, because the type 'mean' was not finding a breakpoint.
+               Type used was 'meanvar' ")
+            chpt = chptmeanvar}
+        }
+        if (type=="var"){ #we used first only mean, and didnt find anything. So we change the method
+          x.bs <- changepoint::cpt.meanvar(na.locf(v2$v),method = method2)
+          chptmeanvar <- cpts(x.bs)
+          rm(x.bs)
+          if (length(chptmeanvar)==0){ #If still there wasnt any breakpoint, we change again the method
+            x.bs <- changepoint::cpt.mean(na.locf(v2$v),method = method2)
+            chptmean <- cpts(x.bs)
+            rm(x.bs)
+            if (length(chptmean)==0){ #test the last method
+              #If the thrid trial is still empty, return the function
+              message("No Breakpoint identified")
+              return(list(level=v,time=t))
+            }else{   message ("Warning: Requested Type might been changed, because the type 'Var' was not finding a breakpoint.
+               Type used was 'Mean' ")
+              chpt = chptmean}
+          }else{   message ("Warning: Requested Type might been changed, because the type 'Var' was not finding a breakpoint.
+               Type used was 'meanvar' ")
+            chpt = chptmeanvar}
+        }
+        if (type=="meanvar"){ #we used first only mean, and didnt find anything. So we change the method
+          x.bs <- changepoint::cpt.mean(na.locf(v2$v),method = method2)
+          chptmean <- cpts(x.bs)
+          rm(x.bs)
+          if (length(chptmean)==0){ #If still there wasnt any breakpoint, we change again the method
+            x.bs <- changepoint::cpt.var(zoo::na.locf(v2$v),method = method2)
+            chptvar <- cpts(x.bs)
+            rm(x.bs)
+            if (length(chptvar)==0){ #test the last method
+              #If the thrid trial is still empty, return the function
+              message("No Breakpoint identified")
+              return(list(level=v,time=t))
+            }else{   message ("Warning: Requested Type might been changed, because the type 'meanvar' was not finding a breakpoint.
+               Type used was 'var' ")
+              chpt = chptvar}
+          }else{   message ("Warning: Requested Type might been changed, because the type 'meanvar' was not finding a breakpoint.
+               Type used was 'mean' ")
+            chpt = chptmean}
+        }
+    } #closes if length(chpt)==0
+
+      # Dealing with gaps
+      empt <- v2$v
+      empt[]<- NA
+      v3 <- zoo::na.locf(v2$v)
+      empt[chpt] <- v3[chpt]
+      newlevel<-c(newlevel,empt)
+      timetpm <-v2$t[chpt]
+      changetime<-c(changetime,timetpm)
+      
+      flagtmp <- v2$v
+      flagtmp[]<-0
+      flagtmp[chpt]<-1
+      flag<-c(flag,flagtmp)
+      #Creating empty vectors for time and level
+      level<-v2$v;level[]<-NA
+      time<-v2$t;time[]<-NA
+      # Creating data frame
+      vt2<- data.frame(v2$t,v2$v)
+      
+      #We centralize the data
+      for(i in 1:(length(chpt)+1)){
+        if (i==1){
+          data<- dplyr::slice(vt2,1:chpt[i])
+        }else {
+          j <- chpt[i-1]+1
+          if (i == length(chpt)+1){
+            data <- dplyr::slice(vt2,j:length(v2$v))
+          }else {
+            data <- dplyr::slice(vt2,j:chpt[i])
+          }# close else of i==length(chpt)
+        } #close else of if i==1
+        
+        mu <- mean(data$v2.v, na.rm=T)
+        if (i==1){
+          level[1:chpt[i]] <- data$v2.v-mu
+          time[1:chpt[i]] <- data$v2.t
+        }else {
+          j<- chpt[i-1]+1
+          if (i == length(chpt)+1){
+            level[j:length(v2$v)] <- data$v2.v-mu
+            time[j:length(v2$v)] <- data$v2.t
+          }else {
+            level[j:chpt[i]] <- data$v2.v-mu
+            time[j:chpt[i]] <- data$v2.t
+          }# close else of i==length(chpt)
+        } #close else of if i==1
+        
+      } #close for
+      levelf <- c(levelf,level)
+      timef <- c(timef,time)
+      chptf <- c(chptf,chpt)
+      rm(v2)
+      
+    } #for j in year
+  
+   return(list(chpt = chpt, changelevel = newlevel, changetime=changetime, flag =flag,level=levelf,time=timef))
+}
+
+```
+
+##  Global Outlier Function 
+
+#### Description: 
+
+Function that applies a Global Outlier Filter.  
+Suspected (and flagged) values are those: |values-mean| > 4*stdv  The mean and standard deviation are global values calculated for the entire time series.   
+  
+#### Usage: 
+
+global_outlier(level, time)  
+
+#### Arguments: 
+
+**level**: level vector of the time series.  
+**time**: time vector of the time series (same length as level)  
+#### Details:  
+
+This is the first filter applied in the Outlier sub-module. It calculates a global mean and standard deviation for the time series, and uses this to identify values far from the curve. It is a gross filter.  
+The suspected values are flagged and removed from the output time series.  
+
+#### Value: 
+ **clean**: level vector with the suspected values replace with NA.  
+ **time**: time vector of the time series (same as input).    
+ **flag**: flag vector,with 1 for values that passed the filter, and 0 for suspected values.   
+
+#### Requirements:
+
+This functions requires R package dplyr (Wickham, 2017). 
+
+#### References:
+
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .  
+
+#### See also:  
+outlier_mod 
+
+
+```{r Global outlier function, message=FALSE,echo=FALSE}
+global_outlier <- function(level, time) {
+
+  a <- data.frame(time,level)
+  
+  msl <- mean(a$level,na.rm=T) #total mean
+  sdsl<- sd(a$level,na.rm=T)  #total standard deviation
+  a <- dplyr::mutate(a,clean=ifelse(abs(level-msl)>4*sdsl,NA,level))
+  a <- dplyr::mutate(a,flag=ifelse(abs(level-msl)>4*sdsl,0,1)) #values that have been excluded
+  
+  return(list(clean = a$clean,flag = a$flag, time = a$time))
+}
+
+```
+
+## Hourly Filter Function  
+
+#### Description: 
+
+Function that creates a regular hourly grid of the data.  
+
+#### Usage:
+
+hourly_filter(v,t,zone="GMT")  
+
+#### Arguments:
+
+**v**: vector with level of the time series.  
+**t**: time vector of the time series (has the same length as v). 
+**zone**: time zone of the the time vector. Default: GMT.
+
+#### Details: 
+
+The Tidal Module calculates tidal predicition based a sea level time series. The minimum time frequency for the prediction is hourly values. The prediction functions accept a data set with higher frequency than hours (e.g., minute data), however the computational time and cost increase signifcantly with the length of the time series. On the other hand, the resolution of the prediction does not increase as much. The high frequency data is useful for other purpuses, such as tsunamis and seiches studies (GLOSS, 2011). Therefore, it is better to use hourly data as input for the prediction.  
+The function creates a regular hourly grid based on the start and end date of the time series. Hourly values are computed by calculating the median within each hour. In case of a data gap larger than 1 hour (in the input data), the output data will have a NA.  
+*Obs*: According to GLOSS(2011), the recommended filter for Tidal Analysis is the Doodson Filter, described in Pugh (1987).  Future work should aim in implemeting this filter here.   
+
+
+#### Value: 
+
+The function returns a data frame with:   
+**time**: Time sequency in hourly intervals, from the start date to the final date.  
+**Level**: The median filtered value within each hour.  
+For one year of data, the output should have 8760 rows. 
+
+#### Requirements:
+
+This function requires the package timeDate(Wuertz et al, 2018), and dplyr (Wickham, 2017).
+
+#### References: 
+
+  
+Global Sea-Level Observing System - GLOSS (2011). Manual on Quality Control of Sea Level Obsevations, Version 1.0, 38pp. Draft.  
+
+Pugh, D. T. (1987). Tides, Surges and mean sea-level. Book. John Wiley & Sons, 472.  
+
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .   
+
+Wuertz, D., Setz, T., Chalabi, Y., Maechler, M., Byers, J.W. (2018) timeDate: Rmetrics - Chronological and Calendar Objects. 
+URL: https://cran.r-project.org/web/packages/timeDate/index.html, 	https://www.rmetrics.org.  
+
+```{r hourly_filter, echo= FALSE,echo=FALSE}
+hourly_filter <- function(v,t,zone="GMT"){
+  # Function that filter data with frequency higher than one hour (minutes), to a hourly value.
+  # The hourly value is the median of the values within that hour. 
+  # Returns a regular hourly grid for the time period given. Allows for NAs in the initial grid.
+  # If there is an hour without data, in the output this hour will have NA. 
+
+  # make working data frame
+  y<- data.frame(Time=t,Level=v)
+  # Remove NAs
+  y<- dplyr::filter(y,is.na(Level)==F)
+  
+  # Get the median every hour
+  
+  y$hour <- as.POSIXct(format(y$Time,"%Y-%m-%d %H:00"),tz=zone)
+  hy <- y %>%
+          dplyr::group_by(hour) %>%
+          dplyr::summarise(Level=median(Level,order_by=Time))
+  hy<-dplyr::rename(hy,Time=hour)
+  
+  ## Making regular hourly grid for the time given
+  # Geting the first and last date
+  sdate <-as.character(y$Time[1])
+  fdate <-as.character(tail(y$Time,1))
+  
+  #Remove the hours
+  pstart <- substr(sdate,0,10)
+  pfinal <- substr(fdate,0,10)
+  
+  # Make sure it will start at 00:00:00 and finish at 23:00:00
+  start<-paste(pstart,"00:00:00",sep=" ")
+  end  <-paste(pfinal,"23:00:00",sep=" ")
+  
+  # Create the regular grid
+  reggrid<-timeDate::timeSequence(from = start, to = end,by="hour",FinCenter = zone)
+  hgrid<- data.frame(Time=reggrid)
+  hgrid<-dplyr::rename(hgrid,Time = GMT.x..i..)
+  
+
+  hdata <- dplyr::full_join(hgrid,hy,by="Time")
+  
+  return(hdata)
+}
+```
+
+
+## Lunar Table Function
+
+#### Description: 
+
+Function that creates a lunartable, given a stard and final date
+
+#### Usage:
+
+lunartable(sdate= as.Date("2005-12-27"),fdate=as.Date("2021-01-09"))
+
+#### Arguments:
+
+**sdate**: the start date to calculate the lunar phases and month. Default: "2005-12-27"  
+**fdate**: the final date to calculate the lunar phases and month. Default: "2021-01-09"  
+
+#### Details: 
+
+For some QC filters, it is necessary to calculate the amplitude or mean in a given month. However, the tidal patterns follow the moon cycle, and not the months of the calendar. This is not a problem when the climatological values are used (i.e., values calculated based on a long time series). But once some stations have less then a year, the use of a "lunar month" can give better results.  
+This function was created to give the "lunar month" and the lunar phase of a day. The default creates a table with dates since 2005 until 2021. However, this can be modified if required. 
+
+#### Value: 
+
+The function returns a table, with the following columns:   
+**time**: Time sequency, in days, from the start date to the final date.  
+**moon**: moon phase in radians, where 0 refers to the new moon, \pi/2 refers to the first quarter (Waxing), \pi refers to the full moon and 3\pi/2 refers to the last quarter (Waning) (See Lunar Package for more information).  
+**mooname**: gives the names of the moon phases refering to the radians in the moon column.  
+**phase**: gives number 1 for New moon, 2 for Waxing, 3 for Full moon and 4 for Waning. 
+**lunarmonth**: number of the lunar month, in relation to the start date. counting from the sdate to the fdate, a lunar month is defined as passing by the 4 lunar phases.  
+If defaults are called, then the number of lunarmonths is 186.
+
+#### Requirements:
+
+This function requires the package Lunar(Lazaridis, 2015), and dplyr (Wickham, 2017).
+
+#### References: 
+
+Lazaridis, E. (2015). lunar: Lunar Phase & Distance, Seasons and Other Environmental Factors. URL: http://statistics.lazaridis.eu .  
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .  
+
+
+```{r lunartable, message=FALSE,echo=FALSE}
+lunartable <- function(sdate= as.Date("2005-12-27"),fdate=as.Date("2021-01-09")){
+
+time <- as.Date(seq.Date(from = sdate,to=fdate, by='day'),'%d %b %y')
+moon <- lunar::lunar.phase(time) #Lunar phase in Radians 
+mooname <- lunar::lunar.phase(time,name=T) #Name of the lunar phases
+
+dm <- data.frame(time,moon,mooname)
+
+#Create a column for a number instead of the phase name 
+dm <- dplyr::mutate (dm, phase=ifelse(mooname=="New",1,NA))
+dm <- dplyr::mutate (dm, phase=ifelse(mooname=="Waxing",2,phase))
+dm <- dplyr::mutate (dm, phase=ifelse(mooname=="Full",3,phase))
+dm <- dplyr::mutate (dm, phase=ifelse(mooname=="Waning",4,phase))
+
+d <- diff(dm$phase)
+d[length(dm$phase)] <- d[length(d)]
+dm <- dplyr::mutate(dm,Lag=dplyr::lag(phase))
+dm$Lag[1]=4
+dm <- dplyr::mutate(dm, dif = Lag-phase)
+dm <- dplyr::mutate(dm, div = ifelse(dif==3,1,NA))
+
+ind <- which(dm$div==1)
+m <- NULL
+for (i in 1:length(ind)){
+  if (i==1){ 
+    m[1:(ind[i+1]-1)] <-i
+  }else{  if (i==length(ind)){
+    m[(ind[i]):length(dm$phase)] <- i
+  }else{
+    m[(ind[i]):(ind[i+1]-1)] <-i
+  }          
+  }}
+
+dm <- dplyr::mutate(dm,lunarmonth=m)
+dm <- dplyr::select(dm,-Lag,-dif,-div)
+lunartable <- dm
+
+return(lt=dm)
+}
+
+```
+
+
+## Median Filter Function
+
+#### Description:  
+
+Function that applies a median filter to smooth over spikes. This filter is part of the Spike sub-module.  
+
+#### Usage: 
+
+medfilt(v,t,n=3,method1="runmed")  
+
+#### Arguments:  
+**v**: Variable vector of the time series to be smoothed over (e.g. sea level).  
+**t**: Time vector of the time series (same length as v).  
+**n**: Size of the window to apply the median filter. Default: n=3.  
+**method1**: Choice of the function used to calculate the median. Default: method1 ="runmed". Choice between: "runmed" (from in-built stats package), "rollapply" (from zoo package), " fractal" (from fractal package).
+
+#### Details:  
+Function that applies a Median Filter over the time series. The window of the median can be choosen with the parameter *n*, and the function used to calculte the median can be chossen with the parameter *method1*.  
+After calculating the median, it also makes a Median Test: 
+if the level is higher than the absolute values of the mean + stdv, then the value is flagged and replaced with NA.  
+This filter is part of the Spike sub-module.  
+
+#### Value:
+**Level_clean**: level vector after passing by the Median Test.
+**Flag**: flag vector for the Median Test, with 1 for values that pass the test, and 0 for suspected and removed values.   
+**Med**: the result of the level vector after passing by the Median Filter.   
+
+#### Requirements:  
+
+This function requires the package zoo (Zeileis et al,2017), dplyr(Wickham, 2017) and package fractal (Constantine, 2017), in case method1="fractal".  
+
+#### References:
+
+Constantine, W., Percival, D. (2017). fractal: A Fractal Time Series Modeling and Analysis Package. URL: https://cran.r-project.org/web/packages/fractal/fractal.pdf .    
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .    
+
+Zeileis, A., Gronthendieck, G., Ryan, J.A., Ulrich, J.M., Andrews, F. (2017). zoo: S3 Infrasctructure for Relugar and Irrelugar Time Series (Z's Ordered Observations). URL: http://zoo.R-Forge.R-project.org/ .   
+
+
+```{r Median Filter function, message=FALSE,echo=FALSE}
+medfilt <- function(v,t,n=3,method1="runmed"){
+
+  if ( ( all(is.na(v)) | (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  if ( ( all(is.na(v)) & (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  
+  vt <- data.frame(v,t)
+  
+  if (method1 =="runmed"){
+    med <- runmed(na.locf(v),n)
+  }
+  if (method1 =="rollapply"){
+    med <- zoo::rollapply(v, width=n, FUN=function(x) median(x, na.rm=TRUE), by=1, by.column=TRUE, partial=TRUE, fill=NA, align="left")
+  }
+  if (method1 =="fractal"){
+    med <- fractal::medianFilter(v,order = n)
+  }
+  
+  stdv<- zoo::rollapply(v, width=n, FUN=function(x) sd(x, na.rm=TRUE), by=1, by.column=TRUE, partial=TRUE, fill=NA, align="left")
+  vt <- dplyr::mutate(vt, clean = ifelse(abs(v) > abs(med + stdv),NA, v )) 
+  vt <- dplyr::mutate(vt, flag  = ifelse(abs(v) > abs(med + stdv),0, 1 )) 
+  
+  return (list (Level_clean = vt$clean, Flag = vt$flag, Med = med))} 
+
+```
+
+##  Out-of-range Function
+
+#### Description:  
+Function applies a filter to detect out-of-range values, according to OPPE in Gloss (2011).  
+Out-of-range values are those beyond the seasonal limit. For a given area and month, the seasonal limit is defined as 2*stdv +- mean.  
+This filter is part of the Outlier sub-module.  
+
+#### Usage:  
+
+out_of_range(level, time, lunarmonth = NULL,lunarphase = NULL)
+
+#### Arguments:  
+**level**: level vector of the time series.  
+**time**: time vector of the time series.  
+**lunarmonth**: parameter to define if the seasonal limit is caculated according to lunar month or according to calendar months. Default: NULL. This vector is resultant from the **lunartable** function.    
+**lunarphase**: parameter to define if the seasonal limit is calculated according to lunar phases, or according to calendar months.Default: NULL. This vector is resultant from the **lunartable** function.  
+
+#### Details:  
+
+Function applies a filter to identify out-of-range values according to OPPE, in GLOSS Quality Control Manual (GLOSS, 2011).   According to the manual, out-of-range values are those beyond the seasonal limit. For a given area and month, the seasonal limit is defined as 3*stdv +- mean.  
+The manual suggests to use 2*stdv, however the multiplication factor was changed to 3, because tests showed that it was removing real values from the time series.  
+Out-of-range values are flagged, and not considered in the subsequent checks.  
+There is the option to calculate the seasonal limit according to lunar phase (New, Waxing, Full, Waning), lunar month(4 phases of the moon), or according to calendar months (january, february, ...).  
+This filter is part of the Outlier sub-module.  
+
+#### Value:  
+**clean**: Level vector after passing the filter. Suspected values have been removed and replaced with NA.  
+**flag**: Flag vector from the filter, with 1 for values that passed the filter, and 0 for suspected values.   
+
+#### Requirements:
+This function requires R package dplyr (Wickham,2017). 
+
+#### References:  
+
+Global Sea-Level Observing System - GLOSS, (2011). Manual on Quality Control of Sea Level Obsevations, Version 1.0, 38pp. Draft.    
+
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .      
+
+#### See also:    
+lunartable; outlier_mod  
+
+
+```{r Out-of-range function, message=FALSE,echo=FALSE}
+out_of_range <- function(level, time, lunarmonth = NULL,lunarphase = NULL) {
+
+    if (any(level==-999,na.rm = T)){  #If missing values in the level vector havent yet been replaced by NA, do it now:
+    level = ifelse(level ==-999, NA, level)
+  }
+  
+  if (is.null(lunarmonth) == F){ 
+    if (is.null(lunarphase) == F){ # Using lunar phases
+  
+      g<- data.frame(Time=time,Level=level,lunarphase=lunarphase)
+      g<- dplyr::group_by(g,lunarphase)
+      slm<- dplyr::summarise(g,msl=mean(Level,na.rm=T),stdv=sd(Level,na.rm=T))
+      g<- dplyr::inner_join(g,slm, by="lunarphase")
+      g<- dplyr::ungroup(g)
+      g<- dplyr::mutate(g,clean =ifelse( abs(level-msl) > 3*stdv, NA, level))
+      g<- dplyr::mutate(g, flag = ifelse( abs(level-msl) > 3*stdv, 0, 1))
+      
+    }else{ # Using Lunar months
+      g<- data.frame(Time=time,Level=level,lunarmonth=lunarmonth)
+      g<- dplyr::group_by(g,lunarmonth)
+      slm<- dplyr::summarise(g,msl=mean(Level,na.rm=T),stdv=sd(Level,na.rm=T))
+      g<- dplyr::inner_join(g,slm, by="lunarmonth")
+      g<- dplyr::ungroup(g)
+      g<- dplyr::arrange(g,by=Time)
+      g<- dplyr::mutate(g,clean =ifelse( abs(Level-msl) > 3*stdv, NA, Level))
+      g<- dplyr::mutate(g, flag = ifelse( abs(Level-msl) > 3*stdv, 0, 1))
+    } #closing of if lunarphase = T
+    
+  }else{ # Using calendar months
+    
+    g<- data.frame(Time=time,Level=level)
+    g<- dplyr::mutate(g, calmonth=format(g$Time, "%m"))
+    g<- dplyr::group_by(g,calmonth)
+    slm<- dplyr::summarise(g,msl=mean(Level,na.rm=T),stdv=sd(Level,na.rm=T))
+    g<- dplyr::inner_join(g,slm, by="calmonth")
+    g<- dplyr::mutate(g,clean =ifelse( abs(Level-msl) > 3*stdv, NA, Level))
+    g<- dplyr::mutate(g, flag = ifelse( abs(Level-msl) > 3*stdv, 0, 1))
+    g<- dplyr::ungroup(g)
+    g<- dplyr::arrange(g,by=Time)
+    
+  }
+  
+  return(list(clean = g$clean, flag = g$flag))
+}
+
+```
+
+##  Outlier Function
+
+#### Description:  
+Function that aplies a filter to identify outliers according to the IOC Sea Level Monitoring Facility. 
+An outlier is a value that subtracted from the median exceeds a tolerance value. The tolerance is calculated by 3 * | Percentile 90 - median|.  
+
+#### Usage:  
+
+outlier_gloss(level, time, lunarmonth=NULL)
+
+#### Arguments:  
+**level**: level vector from the time series  
+**time**: time vector from the time series (same length as level)  
+**lunarmonth**: parameter to define if the seasonal limit is caculated according to lunar month or according to calendar months. Default: NULL. This vector is resultant from the **lunartable** function.    
+
+#### Details:  
+Function applies a filter to identify outliers according to the IOC Sea Level Monitoring facility (http://www.ioc-sealevelmonitoring.org/service.php).   According to the treatment, an outlier is a value, that after subtracted from the median, exceeds a tolerance value.The tolerance is calculated by 3 * | Percentile 90 - median.  
+Outliers are flagged, and not considered in the subsequent checks.  
+There is the option to calculate the tolerance according to the lunar month(4 phases of the moon) or according to calendar months (january, february, ...).  
+This filter is part of the Outlier sub-module.  
+
+
+#### Value:  
+**clean**: Level vector after passing the filter. Suspected values have been removed and replaced with NA.  
+**flag**: Flag vector from the filter, with 1 for values that passed the filter, and 0 for suspected values.   
+#### Requirements:
+This function requires R package dplyr (Wickham,2017). 
+
+#### References:  
+
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .      
+
+
+```{r Outlier Gloss function, message=FALSE,echo=FALSE}
+outlier_gloss <- function(level,time, lunarmonth = NULL) {
+
+  if (any(level==-999,na.rm = T)){  #If missing values in the level vector havent yet been replaced by NA, do it now:
+    level = ifelse(level ==-999, NA, level)
+  }
+  
+  
+  if (is.null(lunarmonth) ==F){ #using lunar month
+    g<-data.frame(Time=time, Level = level,lunarmonth=lunarmonth)
+    
+    g  <- dplyr::group_by(g,lunarmonth)
+    slm<- dplyr::summarise(g,medsl=median(Level,na.rm=T),stdv=sd(Level,na.rm = T) ,p90=quantile(Level,0.9,na.rm=T),p10=quantile(Level,0.1,na.rm=T))
+    g<- dplyr::inner_join(g,slm, by="lunarmonth")
+    g<- dplyr::ungroup(g)
+    g<-arrange(g,by=Time)
+    g<- dplyr::mutate(g,clean =ifelse( abs(Level-medsl) > 3*abs(p90-medsl), NA, Level))
+    g<- dplyr::mutate(g, flag = ifelse( abs(Level-medsl) > 3*abs(p90-medsl), 0, 1))
+    
+  }else{ # using calendar month
+    g<- data.frame(Time=time, Level = level)
+    g<- dplyr::mutate(g, month=format(x$Time, "%Y%m"))
+    g<- dplyr::group_by(g,month)
+    slm<- dplyr::summarise(g,medsl=median(Level,na.rm = T),stdv=sd(Level,na.rm = T) ,p90=quantile(Level,0.9,na.rm = T),p10=quantile(Level,0.1,na.rm = T))
+    g<- dplyr::inner_join(g,slm, by="month")
+    g<- dplyr::ungroup(g)
+    g<-arrange(g,by=Time)
+    g<- dplyr::mutate(g,clean =ifelse( abs(Level-medsl) > 3*abs(p90-medsl), NA, Level))
+    g<- dplyr::mutate(g, flag = ifelse( abs(Level-medsl) > 3*abs(p90-medsl), 0, 1))
+    
+    }
+
+  return(list(clean=g$clean, flag=g$flag))
+}
+
+```
+
+##  Outlier Module Function
+
+#### Description:  
+Function that compiles the 3 filters (Global Outlier, Outlier Gloss, Out-of-range filters).
+
+#### Usage:  
+outlier_mod(level, time, GO = T, OG = T, OR = T, lunarmonth = F, lunarphase = F, clim = NULL)
+  
+#### Arguments:  
+**level**: level vector from the time series.  
+**time**: time vector from the time series.  
+**GO**: Option to turn on/off the Global Outlier filter. Default: GO = T. Choice between T/F. If GO= T, it applies the global_outlier filter. If GO=F, then it skips it.  
+**OG**: Option to turn on/off the Outlier Gloss filter. Default: OG = T. Choice between T/F. If OG= T, it applies the global_outlier filter. If OG=F, then it skips it.  
+**OR**: Option to turn on/off the Out-of-range filter. Default: OR = T. Choice between T/F. If OR= T, it applies the Out-of-range filter. If OR=F, then it skips it.  
+**lunarmonth**: Option to calculate outlier_gloss and out-of-range filters according to the lunar month. Default: lunarmonth=F. Choice between T/F. If lunarmonth = T, outlier_gloss and out_of_range will be applied for the lunarmonth. See functions for more details.  
+**lunarphase**: Option to calculate the out-of-range filter according to the lunar month. Default: lunarmonth=F. Choice between T/F. If lunarmonth = T, out_of_range will be applied for the lunarmonth. See function for more details. 
+**clim**:vector[12x2] with the climatological means and standard deviation calculated for a station. This is an optional input. (If clim is given, it will be applied for out_of_range. See functions for more details).  
+
+#### Details:  
+This function compiles the three filters that make up the Outlier Module. Each filter can be turned on/off. However, at least one filter should be on to apply the module.  
+
+#### Value:
+**Time**: time vector correspondend to the level vector.   
+**Level_orig**: level as the raw level, BUT with -999 values replace for NA.  
+**Level_clean**: level after the outlier detection. Suspected values have been replaced with NA.  
+**Flag**: vector with 0 for values removed and 1 for values kept, combining the different steps.  
+**df_flag**: data frame with the flags for each filter applied.   
+  
+#### Requirements:
+This functions requires R package dplyr (Wickham, 2017),Lunar(Lazaridis, 2015) 
+
+#### References:  
+Lazaridis, E. (2015). lunar: Lunar Phase & Distance, Seasons and Other Environmental Factors. URL: http://statistics.lazaridis.eu .  
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .    
+
+#### See also:  
+out_of_range; global_outlier; outlier_gloss; lunartable
+
+
+```{r Outlier Module function, message=FALSE,echo=FALSE}
+outlier_mod <- function(level, time, GO = T, OG = T, OR = T, lunarmonth = F, lunarphase = F, clim = NULL) {
+  
+  #Testing if station was online for the given period
+  if ((all(is.na(level)) | (all(level == 0, na.rm = T)))==T){
+    message("Offline station")
+    return(list(Time = y$time, Level_orig = level)) }
+  if ((all(is.na(level)) & (all(level == 0, na.rm = T)))==T){
+    message("Offline station")
+    return(list(Time = y$time, Level_orig = level)) }
+  
+  y <- data.frame(time,level)
+  # Replacing values with -999 with NA
+  y <- dplyr::mutate(y,levelna = ifelse(level ==-999, NA, level))
+  y <- dplyr::mutate(y,flagna = ifelse(level ==-999, 0, 1))
+  
+  #Testing if station was online for the given period
+  if ((all(is.na(y$levelna)) | (all(y$levelna == 0, na.rm = T)))==T){
+    message("Offline station")
+    return(list(Time = y$time, Level_orig = y$levelna))}
+  
+  if ((all(is.na(y$levelna)) & (all(y$levelna == 0, na.rm = T)))==T){
+    message("Offline station")
+    return(list(Time = y$time, Level_orig = y$levelna))}
+  
+  if(lunarmonth==T){
+    lt <- lunartable()
+    y<- dplyr::mutate(y, daytime=format(y$time, "%Y-%m-%d"))
+    sdate <- y$daytime[1]
+    fdate<- y$daytime[length(y$daytime)]
+    dm2<- subset(lt,lt$time>=sdate & lt$time<=fdate)
+    
+#   y<- dplyr::group_by(y,daytime)
+    y<- dplyr::mutate(y,lunarmonth=ifelse(daytime==dm2$time,dm2$lunarmonth,NA))
+#   y<- dplyr::ungroup(y)
+    y<- dplyr::mutate(y,lunarmonth=na.locf(lunarmonth))
+    if(lunarphase==T){
+#     y<- dplyr::group_by(y,daytime)
+      y<- dplyr::mutate(y,lunarphase=ifelse(daytime==dm2$time,dm2$phase,NA))
+#     y<- dplyr::ungroup(y)
+      y<- dplyr::mutate(y,lunarphase=na.locf(lunarphase))
+    }
+  }
+  
+  # Step 1: global_outlier filter
+  # Filter based on total mean and standard deviation.
+  # See outlier function for more details
+  if (GO == T){
+    y1 <- global_outlier(y$levelna,y$time)
+    
+  }else { y1 <- data.frame(clean =y$levelna) }
+  
+  # Step 2: Outlier Gloss filter
+  # Filter based on the Medial and 90 Percentile - IOC Sea Level Monitoring Facility
+  if (OG == T){
+    if (lunarmonth == T){
+      y2 <- outlier_gloss(y1$clean, y$time, lunarmonth = y$lunarmonth)
+    }else { y2 <- outlier_gloss(y1$clean, y$time)}
+    
+  }else{ y2<- data.frame(clean = y1$clean)}
+  
+  # Step 3 - Out-of-range filter
+  # Filter of out-of-range values - Gloss Manual
+  if (OR == T){
+    if (lunarmonth == T & lunarphase == T){
+      y3 <- out_of_range(y2$clean, y$time,lunarmonth = y$lunarmonth,lunarphase = y$lunarphase)
+    }else{ 
+      if (lunarmonth == T){ y3 <- out_of_range(y2$clean, y$time,lunarmonth = y$lunarmonth)  
+      }else{ y3 <- out_of_range(y2$clean, y$time) 
+      } }
+    
+  }else{y3 <- data.frame(clean=y2$clean)}
+  
+  # Creating a flag data frame:
+  if (GO == T & OG == T & OR == T){
+    Df_flag <- data.frame(y$flagna,y1$flag,y2$flag,y3$flag)
+  }
+  if (OG == T & OR == T){
+    Df_flag <- data.frame(y$flagna,y2$flag,y3$flag)
+  }
+  if (GO == T & OR == T){
+    Df_flag <- data.frame(y$flagna,y1$flag,y3$flag)
+  }
+  if (GO == T & OG == T ){
+    Df_flag <- data.frame(y$flagna,y1$flag,y2$flag)
+  }
+  # Creating a unique vector that combines all the flags from each step
+  flag = apply(Df_flag, 1, prod, na.rm=T)
+  
+  # Getting the output level clean  
+  clean <- y3$clean
+  return(list(Time = y$time, Level_orig = y$levelna, Level_clean = clean, Flag = flag, Df_flag=Df_flag))
+} 
+
+```
+
+## QC Module Function
+
+#### Description:  
+Function that compiles the different sub-modules of the QC Module. 
+
+#### Usage:
+QCmodule(v,t, ALL = T, BP= T, ST = T, OUT = T, SC = T, SP =T,
+         go = T, og= T, or = T, lm = F, lp = F,cli=NULL,
+         method1 = "runmed", method2="BinSeg",lagi=120,ni=3,ka=3,wid=2,filtro=1,type="mean")  
+
+#### Arguments:  
+**v**: level vector of the time series.  
+**t**: time vector of the time series (same length as t).  
+**ALL**: Option to apply directly all the sub-modules. Default = T. If ALL=F, then at least one module should be turned off (required in the following parameters).  
+**BP**: Option to turn on/off the Breakpoint sub-module.Default: T. If =F, then this sub-module is skipped.  
+**ST**: Option to turn on/off the Stability Check sub-module.Default: T. If =F, then this sub-module is skipped.  
+**OUT**: Option to turn on/off the Outlier sub-module.Default: T. If =F, then this sub-module is skipped.      
+**SC**: Option to turn on/off the Speed of Change Check sub-module.Default: T. If =F, then this sub-module is skipped.    
+**SP**: Option to turn on/off the Spike sub-module.Default: T. If =F, then this sub-module is skipped.  
+**go**,**og**,**or**: parameters of the Outlier Module, to choose which filter to (des)active.  
+**method1**: refers to the Median Filter method applied in the Spike Module.  
+**method2**: refers to the Changepoint method applied in the Breakpoint Module.  
+**ka**,**ni**,**wid**,**filtro**: parameters of the Spike Module. 
+**filtro**: Option to choose if you want both Median and Spline filter (filtro=1), only the median filter (filtro=2), or only the spline filter (filtro=3). Default = 1.  
+**lagi**: a parameter of the Stability Check Module.  
+**lm**,**lp**: lunarmonth and lunarphase are options of the Outlier Module to apply treatments according to the lunarmonth or lunar phase.
+**cli**: vector with the climatological means and amplitudes, to be used as clim in Out_of_Range function of the Outlier Module.  
+**type**: parameter of the Breakpoint Module.  
+
+For more information, look at each sub-module and filter.  
+
+#### Details:  
+Function that combines the different sub-modules and filters of the QC module. 
+It allows to turn on/off each sub-module, and to change their parameters.  
+Returns two data frames: one with vectors of the same length as the input vectors. This data frame contains the time vector, the original level, the clean vector( where the suspected values have been replaced with NA), a flag vector for each module, and a final flag vector (result of the combination of the prio flags) with 0 for the values removed and 1 for the values kept.  
+The other dataframe contains only the time and clean level vectors, however the NA's have been removed. So the lenght of this vectors is smaller (or equal in case of no suspected values identified) to the input vectors.  
+It is important however to keep the original vectors accompanied only with the flags for purposes of data storing.  
+
+#### Value:  
+**xQC**: Data frame with:
+  + **Time**: time vector of the time series (same length as input).  
+  + **Level_orig**: original level of the time series, same as input.  
+  + **Level_clean**: clean level after the QC module, where suspected values have been replaced by NA's (same length as Level_orig).  
+  + **FlagNA**: flag with 0 for missing values that are registered as -999 in the original level. This flag is not considered when combining the flags of the different modules.  
+  + **FlagST**: flag from the Stability Check sub-module.   
+  + **FlagOUT**: flag from the Outlier sub-module.  
+  + **FlagSC**: flag from the Speed of Change Check sub-module.  
+  + **FlagSP**: flag from the Spike detection sub-module.  
+  + **Flag_final**: Combination of the previous flags.  
+  
+**xclean**: Data frame with:
+  +**Level**: clean level, where the suspected values have been **removed**. This vector has length smaller (or equal in case no suspected values were identified) to the input level.   
+  + **Time**: time vector of the time series, with same lenth as the level vector.  
+If an Error occurs after the application of a module, the function breaks, and returns a message indicating in which module was the problem.  
+  
+#### Requirements:
+This function requires R packages: dplyr, lunar, changepoint, zoo, fractal, tseries.  
+
+#### References:
+Constantine, W., Percival, D. (2017). fractal: A Fractal Time Series Modeling and Analysis Package. URL: https://cran.r-project.org/web/packages/fractal/fractal.pdf .    
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .    
+
+Killick, R., Haynes, K., Eckley, I., Fearnhead, P., Lee, J. (2016). changepoint: Methods for Changepoint Detection. URL: https://github.com/rkillick/changepoint/ . 
+
+Trapletti, A., Hornik, K., LeBaron, B. (2018). tseries: Time Series Analysis and computational finance. URL: https://cran.r-project.org/web/packages/tseries/tseries.pdf .  
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .  
+
+Zeileis, A., Gronthendieck, G., Ryan, J.A., Ulrich, J.M., Andrews, F. (2017). zoo: S3 Infrasctructure for Relugar and Irrelugar Time Series (Z's Ordered Observations). URL: http://zoo.R-Forge.R-project.org/ .   
+
+#### See also:  
+breakpoint; global_outlier; lunartable; medfilt; out_of_range; outlier_gloss; outlier_mod; speed_of_change; spike; spline; stability_check.
+
+```{r QC Module function, message=FALSE,echo=FALSE}
+QCmodule <- function(v,t, ALL = T, BP= T, ST = T, OUT = T, SC = T, SP =T,
+                     go = T, og= T, or = T, lm = F, lp = F,cli=NULL,
+                     method1 = "runmed", method2="BinSeg",lagi=120,ni=3,ka=3,wid=2,filtro=1,type="mean"){
+  xQC <- NULL
+  xQC$Time<-t
+
+  if ( ( all(is.na(v)) | (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(xQC=xQC))} 
+  if ( ( all(is.na(v)) & (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(xQC=xQC))} 
+  if (any(v==-999,na.rm = T)){  #If missing values in the level vector havent yet been replaced by NA, do it now:
+    flagna = ifelse(v ==-999, 0, 1)
+    v = ifelse(v ==-999, NA, v)
+    if (all(is.na(v)==T)){
+      message("Offline Station - only levels=-999")
+      msg ="Offline station - only levels=-999"
+      
+      xQC$Level_clean <- v
+      xQC$Flag_final <-flagna
+      return(list(xQC=xQC,msg=msg)) 
+    }else{
+      vtest = na.remove(v)
+      if (all(vtest==0)){
+        message("Offline Station - only levels=-999 & level =0")
+        msg ="Offline station - only levels=-999 & level =0"
+        xQC <- NULL
+        xQC$Level_clean <- v
+        xQC$Flag_final <-flagna
+        return(list(xQC=xQC,msg=msg))
+      }
+    }
+  }else{ flagna=v;flagna[]<-1}
+  
+  if (ALL == T ){
+    # Time Series Break Point Correction
+    bp <- breakpoint(v,t)
+    if (all(is.na(bp$level) | (all(bp$level == 0, na.rm = T))==T)){
+      message("empty time series after Breakpoint Module")
+      msg ="empty time series after Breakpoint Module"
+
+      xQC$Level_clean <- v
+      xQC$Flag_final  <- flagna
+      return(list(xQC=xQC,msg=msg))
+    } 
+    # Stability Module
+    st <- stability_check(bp$level,t,lag=lagi)
+    stflag<-st$Flag
+    bpflag<-bp$flag;chpt=bp$chpt;rm(bp)
+    if (all(is.na(st$Level_clean) | (all(st$Level_clean == 0, na.rm = T))==T)){
+      message("empty time series after Stability Module")
+      msg ="empty time series after Stability Module"
+      xQC$Level_clean <- st$Level_clean
+      stflag<-st$Flag
+      xQC$Flag_final <-flagna * stflag
+      return(list(xQC=xQC,msg=msg))
+    }else{ 
+      dt <- data.frame(time = t, level = st$Level_clean)
+      ind <- which(!is.na(st$Level_clean))
+      dt2 <- dt[ind,]
+      
+      if ( (dt2$time[length(ind)]-dt2$time[1]) <= 24){ #checking if the rest of the data has more than 1 day
+        message("time series only had 1 day of data after Stability Module")
+        msg ="time series only had 1 day of data after Stability Module"
+        xQC$Level_clean <- st$Level_clean
+        stflag<-st$Flag
+        xQC$Flag_final <-flagna * stflag
+        
+        return(list(xQC=xQC,msg=msg))
+      }
+    }
+    
+    # Outlier Module
+    out <- outlier_mod(st$Level_clean,t,lunarmonth=lm,lunarphase = lp, GO = go, OG = og,OR = or, clim=cli )
+    rm(st)
+    if ((all(is.na(out$Level_orig)) | (all(out$Level_orig == 0, na.rm = T)))==T){
+      message("empty time series after Outlier Module")
+      msg ="empty time series after Outlier Module"
+      xQC$Level_clean <- out$Level_clean
+      outflag<-out$Flag
+      xQC$Flag_final <-flagna * outflag * stflag
+      return(list(xQC=xQC,msg=msg))
+    }
+    # Speed of change Module
+    sc <- speed_change(out$Level_clean,out$Time,lunarmonth = lm) # uses the result of the outlier module as level
+    outflag<-out$Flag
+    rm(out)
+    if (all(is.na(sc$Level_clean) | (all(sc$Level_clean == 0, na.rm = T))==T)){
+      message("empty time series after Speed of Change Module")
+      msg ="empty time series after Speed of Change Module"
+      xQC <- NULL
+      xQC$Level_clean <- sc$Level_clean
+      outflag<-out$Flag
+      scflag<-sc$Flag
+      xQC$Flag_final <-flagna * stflag * outflag*scflag
+      return(list(xQC=xQC,msg=msg))    
+    } 
+    # Spike detection Module
+    sp <- spike(sc$Level_clean,t,filt = filtro,k = ka,n=ni,wd = wid)
+    scflag<-sc$Flag
+    rm(sc)
+    if (all(is.na(sp$Level_clean) | (all(sp$Level_clean == 0, na.rm = T))==T)){
+      message("empty time series after Spike Module")
+      msg ="empty time series after Spike Module"
+      xQC$Level_clean <- sp$Level_clean
+      xQC$Flag_final <-flagna * stflag * outflag*scflag *sp$Flag
+      return(list(xQC=xQC,msg=msg))    
+    } 
+    
+  }else{ 
+    
+    # Breakpoint Module
+    if(BP==F){
+      bp<- NULL
+      bp$level <- v
+      bp$Flag <-v
+      bp$Flag[]<-NA
+      bp$chpt <- 0
+    }else{
+      bp <- breakpoint(v,t)
+      if (all(is.na(bp$level) | (all(bp$level == 0, na.rm = T))==T)){
+        message("empty time series after Breakpoint Module")
+        msg ="empty time series after Breakpoint Module"
+        xQC$Level_clean <- v
+        xQC$Flag_final <-flagna
+        return(list(xQC=xQC,msg=msg))
+      } 
+    }
+    
+    # Stability Module
+    if(ST==F){
+      st <- NULL
+      st$Level_clean <-bp$level
+      st$Flag <-v
+      st$Flag[]<-1
+      bpflag<-bp$flag;chpt=bp$chpt;rm(bp)
+      
+    }else{
+      st <- stability_check(bp$level,t,lag=lagi)
+      bpflag<-bp$flag;chpt=bp$chpt;rm(bp)
+      if (all(is.na(st$Level_clean) | (all(st$Level_clean == 0, na.rm = T))==T)){
+        message("empty time series after Stability Module")
+        msg ="empty time series after Stability Module"
+        xQC$Level_clean <- st$Level_clean
+        stflag<-st$Flag
+        xQC$Flag_final <-flagna * stflag
+        return(list(xQC=xQC,msg=msg))
+      }else{ 
+        dt <- data.frame(time = t, level = st$Level_clean)
+        ind <- which(!is.na(st$Level_clean))
+        dt2 <- dt[ind,]
+        
+        if ( (dt2$time[length(ind)]-dt2$time[1]) <= 24){ #checking if the rest of the data has more than 1 day
+          message("time series only had 1 day of data after Stability Module")
+          msg ="time series only had 1 day of data after Stability Module"
+          xQC$Level_clean <- st$Level_clean
+          stflag<-st$Flag
+          xQC$Flag_final <-flagna * stflag
+          return(list(xQC=xQC,msg=msg))
+        }
+      }
+    }
+    
+    # Outlier Module
+    if(OUT==F){
+      out <- NULL
+      out$Level_clean<-st$Level_clean
+      out$Level_orig<-v
+      out$Flag <-v
+      out$Flag[]<-1
+      stflag<-st$Flag;rm(st)
+    }else{
+      out <- outlier_mod(st$Level_clean,t,lunarmonth=lm,lunarphase = lp)
+      stflag<-st$Flag;rm(st)
+      if ((all(is.na(out$Level_orig)) | (all(out$Level_orig == 0, na.rm = T)))==T){
+        message("empty time series after Outlier Module")
+        msg ="empty time series after Outlier Module"
+        xQC$Level_clean <- out$Level_clean
+        outflag<-out$Flag
+        xQC$Flag_final <-flagna * outflag * stflag
+        return(list(xQC=xQC,msg=msg))
+      }
+    }
+    
+    # Speed of change Module
+    if(SC==F){
+      sc <- NULL
+      sc$Level_clean <- out$Level_clean 
+      sc$Flag <-v
+      sc$Flag[]<-1
+      outflag<-out$Flag;rm(out)
+      }else{
+      sc <- speed_change(out$Level_clean,t,lunarmonth = lm) # uses the result of the outlier module as level
+      outflag<-out$Flag;rm(out)
+      if (all(is.na(sc$Level_clean) | (all(sc$Level_clean == 0, na.rm = T))==T)){
+        message("empty time series after Speed of Change Module")
+        msg ="empty time series after Speed of Change Module"
+        scflag<-sc$Flag
+        xQC$Flag_final <-flagna * stflag * outflag*scflag
+        xQC$Level_clean <- sc$Level_clean
+        return(list(xQC=xQC,msg=msg))    
+      } 
+    }
+    
+    # Spike detection Module
+    if(SP==F){
+      sp <- NULL
+      sp$Level_clean<-sc$Level_clean
+      sp$Flag <-v
+      sp$Flag[]<-1
+      scflag<-sc$Flag;rm(sc)
+    }else{
+      sp <- spike(sc$Level_clean,t,filt = filtro,k=ka,n=ni,wd=wid)
+      scflag<-sc$Flag;rm(sc)
+      if (all(is.na(sp$Level_clean) | (all(sp$Level_clean == 0, na.rm = T))==T)){
+        message("empty time series after Spike Module")
+        msg ="empty time series after Spike Module"
+        xQC<- NULL
+        xQC$Level_clean <- sp$Level_clean
+        xQC$Level_clean <- sp$Level_clean
+        xQC$Flag_final <-flagna * stflag * outflag*scflag *sp$Flag
+        return(list(xQC=xQC,msg=msg))    
+      } 
+    }
+  }  
+
+  vclean <-sp$Level_clean
+  Df_flags <- data.frame(stflag,outflag,scflag,sp$Flag)
+  flags = apply(Df_flags, 1, prod, na.rm=T)
+  
+  x<-data.frame(Time=t,Level_orig=v,FlagNA=flagna,FlagST=stflag,FlagOUT=outflag,FlagSC=scflag,FlagSP=sp$Flag,Flag_final=flags,Level_clean=sp$Level_clean)
+
+  
+  xclean<- dplyr::filter(x,Flag_final==1)
+  xclean<-dplyr::select(xclean,-Level_orig,-FlagNA,-FlagST,-FlagOUT,-FlagSC,-FlagSP)
+  xclean<-dplyr::rename(xclean,Level=Level_clean)
+
+    return(list(xQC=x,xclean=xclean))
+  
+}
+
+```
+
+##  Speed of Change Function
+
+#### Description:  
+Function that applies a filter to check the speed of change between two consecutives measurements.  
+
+#### Usage:  
+speed_change(level, time, lunarmonth=F)
+
+#### Arguments:  
+**level**: level vector of the time series.
+**time**: time vector of the time series.  
+**lunarmonth**: Option to calculate the amplitude based on the lunarmonth. Default = F, amplitude is calculated according to calendar month.  
+
+#### Details:  
+Function that applies a filter to check the speed of change between two consecutives measurements.  
+Considering two consecutive measurements h1 and h2, the difference between h1 and h2 cannot surpass a tolerance value.  The tolerance value is calculated in relation to the frequency of the time series and the amplitude.  
+This sub-module is based on the BODC QC Manual. 
+The filter tests if |h1-h2| > |tol*Amp|. The flag is put for h2.  The tol value is calculated based on the frequency (time difference between h1 and h2).  
+
+#### Value:  
+**Level_clean**: vector with the level after the speed of change filter
+**Flag**; vector with 0 for values that were removed and 1 values kept. 
+ 
+
+#### Requirements:  
+This function requires R packages: dplyr (Wickham, 2017), zoo(Zeileis et al, 2017) and lunar(Lazarids, 2015). 
+
+#### References:  
+British Oceanographic Data Centre (BODC), 2007. Data Quality Control Procedures, Version 3.0.(September 2007), 75pp.
+
+Lazaridis, E. (2015). lunar: Lunar Phase & Distance, Seasons and Other Environmental Factors. URL: http://statistics.lazaridis.eu .  
+
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .  
+
+Zeileis, A., Gronthendieck, G., Ryan, J.A., Ulrich, J.M., Andrews, F. (2017). zoo: S3 Infrasctructure for Relugar and Irrelugar Time Series (Z's Ordered Observations). URL: http://zoo.R-Forge.R-project.org/ .   
+
+#### See also:  
+lunartable  
+
+```{r Speed of Change function, message=FALSE,echo=FALSE}
+speed_change <- function(level, time, lunarmonth = F) {
+
+  # Testing if station was online for the given period
+  if ( (all(is.na(level)) | (all(level == 0, na.rm = T)))==T){
+    message ("Offline station")
+    flag<-level
+    flag[]<-0
+    return( list(Level_clean = level, Flag=flag))}  
+  if ( (all(is.na(level)) & (all(level == 0, na.rm = T)))==T){
+    message ("Offline station")
+    flag<-level 
+    flag[]<-0
+    return(list(Level_clean = level, Flag=flag))}  
+  
+  if(lunarmonth==T){ #Using lunar month
+    y <- data.frame(Time=time,Level=level)
+    lt <- lunartable()
+    y <- dplyr::mutate(y, daytime=format(y$Time, "%Y-%m-%d"))
+    sdate <- y$daytime[1]
+    fdate<- y$daytime[length(y$daytime)]
+    dm2<- subset(lt,lt$time>=sdate & lt$time<=fdate)
+    
+#   y<- dplyr::group_by(y,daytime)
+    y<- dplyr::mutate(y,lunarmonth=ifelse(daytime==dm2$time,dm2$lunarmonth,NA))
+#   y<- dplyr::ungroup(y)
+    y<- dplyr::mutate(y,lunarmonth=na.locf(lunarmonth))
+    
+    y<- dplyr::group_by(y,lunarmonth)
+    slm<- dplyr::summarise(y,Hwl=max(Level,na.rm=T),Lwl=min(Level,na.rm=T))
+    slm<- dplyr::mutate(slm,Amp=abs(Hwl-Lwl))
+    y<- dplyr::inner_join(y,slm, by="lunarmonth")
+    y<- dplyr::ungroup(y)
+    y<- dplyr::arrange(y,Time)
+    
+  }else{ #Using calendar month
+    y<- data.frame(Time=time,Level=level)
+    y<- dplyr::mutate(y, calmonth=format(y$Time, "%m"))
+    
+    y<- dplyr::group_by(y,calmonth)
+    slm<- dplyr::summarise(y,Hwl=max(Level,na.rm=T),Lwl=min(Level,na.rm=T))
+    slm<- dplyr::mutate(slm,Amp=abs(Hwl-Lwl))
+    y<- dplyr::inner_join(y,slm, by="calmonth")
+    y<- dplyr::ungroup(y)
+    y<- dplyr::arrange(y,Time)
+  }  
+
+  y <- dplyr::mutate(y, prev = lag(Level, order_by = y$Time))
+  
+  # we cant compare a value at time t with a value at time t-1, if that value is NA
+  # So:
+  if (is.na(y$prev[1])){ # Checking if the first value is NA
+    e<- which(is.na(y$prev))
+    if (length(e)==1){
+      k <- e[1]+1
+    }else{
+      ee <- diff(e)
+      a <- which(ee > 1)
+      k <- e[a[1]] +1 #position of the fist non NA
+      rm(ee);rm(a)
+    }
+    y$prev[1] <- y$prev[k] # Replacing the first value by the non-na, in case it is na
+    rm(e);rm(k)}
+  
+  if (is.na(y$prev[length(y$prev)])){ #Checking if the last value is NA
+    e<- which(is.na(y$prev))
+    if (length(e)==1){
+      k <- e[1]+1
+    }else{
+      ee <- diff(e)
+      a <- which(ee > 1)
+      k <- e[a[length(a)]]+1 #position of the last non NA
+    }
+    y$prev[length(y$prev)] <- y$prev[k]} # Replacing the last by non-NA
+  
+  # Doing a NA Interpolation, where the na values are replaced by an interpolated one.
+  y <- dplyr::mutate(y, prev2 = zoo::na.approx(prev))
+  
+  # Calculating the Frequency: 
+  freq <-frequency(time)
+  if (freq <= 5 ){ tol = 0.05}
+  if (freq > 5 & freq <= 15){ tol = 0.08}
+  if (freq > 15 & freq <= 20){ tol = 0.1}
+  if (freq > 20 & freq <= 30){ tol = 0.15}
+  if (freq > 30 & freq <= 60){ tol = 0.3}
+  # Tolerance values based on BODC QC Manual v3
+  
+  y <- dplyr::mutate(y, clean = ifelse(abs(Level - prev2) > abs(tol*Amp),NA, Level )) 
+  y <- dplyr::mutate(y, flag = ifelse(abs(Level - prev2) > abs(tol*Amp),0, 1 )) 
+  
+  return(list(Level_clean= y$clean, Flag = y$flag))
+}
+
+```
+
+## Spike Dectection Function
+
+#### Description:  
+Function to detect and remove spikes (smaller spikes that pass by the outlier module) from the signal.  
+Uses two filters: Median Filter and a Spline Filter.  
+
+#### Usage:  
+spike(v,t,wd=12,n=3,k=3,method1="runmed",filt=1)  
+
+#### Arguments:  
+**v**: level vector of the time series.  
+**t**: time vector of the time series.  
+**wd**: window, in hours, to apply the spline. Default = 12.  
+**k**: degree of the standard deviation used to dected the spikes.Default = 2.  
+(e.g. k= 2, a value that differs from the median by 2*sdtv is removed)   
+**n**: window size for the Median filter. Default = 3. must be an odd number!  
+**method**: methods for the Median Filter. Default = "runmed".  
+**filt**: Option to choose if you want both Median and Spline filter (filt=1),only the median filter (filt=2), or only the spline filter (filt=3). Default = 1.  
+
+#### Details:
+Function to detect and remove spikes (smaller spikes that pass by the outlier module) from the signal.  
+Uses two filters: Median Filter and a Spline Filter.  
+It tests if:
+  + |value| exceeds the |spline-stdv|*k, for filt=3
+  + |value| exceeds the |median-stdv|*k, for filt=2 with the median resultant from the median filter funtion. 
+  + |value| exceeds the |spline-stdv|*k, for filt=1, with the spline calculated with the median result of the median filter function. 
+  
+#### Value: 
+**Level_clean**: vector with the level after the speed of change filter
+**Flag**; vector with 0 for values that were removed and 1 values kept. 
+
+#### Requirements:  
+This functions requires R packages: zoo(Zeileis et al, 2017), dplyr(Wickham, 2017) and fractal(Constantine, 2017) 
+
+#### References:  
+Constantine, W., Percival, D. (2017). fractal: A Fractal Time Series Modeling and Analysis Package. URL: https://cran.r-project.org/web/packages/fractal/fractal.pdf .    
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .    
+
+Zeileis, A., Gronthendieck, G., Ryan, J.A., Ulrich, J.M., Andrews, F. (2017). zoo: S3 Infrasctructure for Relugar and Irrelugar Time Series (Z's Ordered Observations). URL: http://zoo.R-Forge.R-project.org/ . 
+
+#### See also:  
+medfilt; splinefilt
+
+```{r Spike function, message=FALSE,echo=FALSE}
+spike <- function(v,t,wd=12,n=3,k=3,method1="runmed",filt=1){
+
+  # Testing if there is data
+  if ( ( all(is.na(v)) | (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  if ( ( all(is.na(v)) & (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  
+  if(filt==1){
+    m <- medfilt(v,t,n,method1 = method1)
+    vm<- m$Level_clean
+    sp <- splinefilt(vm,t,wd)
+    
+    stdv <- sd(v,na.rm = T)
+
+    vclean <- ifelse(abs(v-sp$y)>abs(k*stdv) ,NA,v)
+    flag <-  ifelse(abs(v-sp$y)>abs(k*stdv) ,0,1)
+  }
+  if (filt ==2){
+    m <- medfilt(v,t,n,method1 = method1)
+    vm<- m$Level_clean
+
+    stdv <- sd(v,na.rm = T)
+
+    vclean <- ifelse(abs(v-vm)>abs(k*stdv) ,NA,v)
+    flag <-  ifelse(abs(v-vm)>abs(k*stdv) ,0,1)
+  }
+  if (filt==3){
+    
+  sp <- splinefilt(v,t,wd)
+  
+  stdv <- sd(v,na.rm = T)
+  
+  vclean <- ifelse(abs(v-sp$y)>abs(k*stdv) ,NA,v)
+  flag <-  ifelse(abs(v-sp$y)>abs(k*stdv) ,0,1)
+  
+  
+  }
+  
+  return (list (Level_clean = vclean, Flag = flag)) 
+}  
+
+```
+
+##  Spline Filter Function
+
+#### Description:  
+Function that applies a spline to remove spikes. 
+
+#### Usage:  
+splinefilt(v,t,wd=NULL)  
+
+#### Arguments:
+**v**: vector of the variable to be smoothed over (e.g. sea level).  
+**t**: time vector of the time series, correspondent to v.  
+**wd**: the size of the window, in hours, to apply the spline filter.  
+
+#### Details:  
+This function applies a spline (piecewise polynomial) to smooth over the time series, and detect not so obvious outlier.  
+The filter is only actually applied in the Spike function. Here, only the smooth spline is calculated, based on the required window.  
+
+#### Value:  
+**sp**: the output of the function smooth.spline (from build-in Stats package).  
+
+#### Requirements:  
+This function requires the R package zoo(Zeileis et al, 2017), and the built in Stats package. 
+
+#### References:  
+Zeileis, A., Gronthendieck, G., Ryan, J.A., Ulrich, J.M., Andrews, F. (2017). zoo: S3 Infrasctructure for Relugar and Irrelugar Time Series (Z's Ordered Observations). URL: http://zoo.R-Forge.R-project.org/ . 
+
+
+#### See also:  
+spike  
+
+```{r Spline Filter function, message=FALSE,echo=FALSE}
+splinefilt <- function(v,t,wd=NULL){
+
+  if ( ( all(is.na(v)) | (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  if ( ( all(is.na(v)) & (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  
+  if(is.na(v[1]) & is.na(v[length(v)])==T){ 
+    vsp <- zoo::na.spline(v)
+    v[1]<-vsp[1]
+    v[length(v)]<-vsp[length(vsp)]}
+  if(is.na(v[1])==T){v<-zoo::na.locf(v,fromLast = T)}
+  if(is.na(v[length(v)])==T){v<-na.locf(v)}
+  
+    if(is.null(wd)==F){
+    freq <-(60/frequency(t))
+    lag = freq*wd
+    sp <- smooth.spline(t, zoo::na.locf(v), df=lag)
+  }else {  sp <- smooth.spline(t, zoo::na.locf(v))}
+  
+  return(sp=sp) 
+}
+
+```
+
+##  Stability Check Function
+
+#### Description:  
+Function that looks if the same values is being repeated for more than 2 hours (Flat line kept for more than 2 hours). It detects mal-functioning of the sensor.  
+
+#### Usage:  
+stability_check(v,t,lag)
+
+#### Arguments:  
+**v**: vector of the variable to be smoothed over (e.g. sea level).  
+**t**: time vector of the time series, correspondent to v.  
+**lag**:time interval/range we want to check our stability.  
+
+#### Details:
+Function that looks if the same values is being repeated for more than 2 hours. It detects mal-functioning of the sensor.  
+It tests for equal values.  
+
+#### Value:  
+**Level_clean**: vector with the level after the speed of change filter
+**Flag**; vector with 0 for values that were removed and 1 values kept. 
+
+#### Requirements:
+This function requires the R packages zoo (Zeileis et al, 2017), tseries (Trapletti et al, 2018), and dplyr (Wichkam, 2017).  
+
+#### References:
+Wickham, H., Francois, R., Henry, L., Muller, K. (2017). dplyr: A Grammar of Data Manipulation. URL:http://dplyr.tidyverse.org, https://github.com/tidyverse/dplyr .    
+
+Trapletti, A., Hornik, K., LeBaron, B. (2018). tseries: Time Series Analysis and computational finance. URL: https://cran.r-project.org/web/packages/tseries/tseries.pdf .       
+Zeileis, A., Gronthendieck, G., Ryan, J.A., Ulrich, J.M., Andrews, F. (2017). zoo: S3 Infrasctructure for Relugar and Irrelugar Time Series (Z's Ordered Observations). URL: http://zoo.R-Forge.R-project.org/ . 
+
+#### See also:  
+QCmodule  
+
+
+```{r function, message=FALSE,echo=FALSE}
+stability_check <- function(v,t,lag) {
+
+  # Testing if the station was offline
+  if ( ( all(is.na(v)) | (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  
+  if ( ( all(is.na(v)) & (all(v == 0, na.rm = T)) )==T ){
+    message ("Offline Station")
+    return(list(Time = time, Level_clean = v))} 
+  
+  rounds <- round(length(t)/lag)
+  tmp <- data.frame(Time = t, Level = v)
+  out<- NULL
+  flag <- NULL
+  if (any(!is.na(v))){ 
+    # We have values that are not NA
+    if (any(v != 0, na.rm = T)){
+      #We have values that are not NA and not ). So we check for stability
+      for (j in 1:(rounds)){
+        i <- lag*j
+        
+        if( j==1){
+          data <- dplyr::slice(tmp,1:lag)
+        }else { 
+          if (j == rounds) { data <- slice(tmp, (lag*j):length(t)); i <- length(t)}
+          data <- dplyr::slice(tmp, (lag*(j-1)):(lag*j) )}
+        
+        if (all(is.na(data$Level) == T)){out[i]<- "stable"; flag[i] <- 0
+        } else{ if (any(data$Level != 0, na.rm = T)){ 
+          datana = tseries::na.remove(data$Level)
+          if (length(datana)==1){ 
+            out[i]<- "stable"
+            flag [i] <- 0
+          }else {
+            susp <- datana[1]/datana[length(datana)]
+            if (is.na(susp)){ out[i]<- "stable"; flag[i] <- 0
+            }else {
+              susp2 <- datana[2]/datana[length(datana)-1]
+              if (susp == 1 | susp2==1){ 
+                if (length(datana)>2){
+                  susp3 <- datana[3]/datana[length(datana)-2]
+                  if (susp3 == 1){ out[i]<- "stable"
+                  flag [i] <- 0
+                  } #close susp3==1
+                } #closes length(datana)>2
+              }else { out[i]<- "ok";flag[i] <- 1} #close susp==1 |susp2==1
+            } #close else if is.na(susp)                        
+          }#close else of if length(datana)==1
+          
+        }else { out[i]<- "stable"; flag[i] <- 0} #close if any(data$level) !=0
+        } #close else of if all(is.na(data$level))
+      }#close for loop 1:rounds
+      
+    }else{ message("Station Offline  - All values are 0 ") #closes if any(v) !=0
+      out[length(t)]<- "stable"
+      flag [length(t)] <- 0
+    }
+    
+  }else{ message("Station Offline  - All values are NA")
+    out[length(t)]<- "stable"
+    flag [length(t)] <- 0
+  } #closes else of if any(!is.na(v))
+  
+  out =  zoo::na.locf(out, fromLast = T)
+  flag = zoo::na.locf(flag,fromLast = T)
+  tmp<- dplyr::mutate(tmp, clean = ifelse(flag==0,NA,Level))
+  # data<- mutate(data, clean = ifelse(flag==0,NA,Level))
+  tmp$flag <- flag
+  tmp<- dplyr::mutate(tmp, flag = ifelse(is.na(Level) & is.na(clean),0,flag))
+  
+  
+  return(list(Level_clean = tmp$clean,Flag = tmp$flag))
+}
+
+```
+
+## Station Map Function
+
+#### Description:  
+Function to plot diretcly the location of the station on the world map,given the latitude and longitude.  
+
+#### Usage:  
+station_map(lat,lon,name,save=NULL)  
+
+#### Arguments:
+**Lat**:latitude of the station (as value from 0 to +-90),  
+**Lon**:longitude of the station (as value 0 to 360, or 0 to +-180).    
+**Name**: name of the station (as character).
+**Save**: pathway to save the map (optional)
+
+#### Details:  
+Creates a world map and plot the station on top of it.  
+
+#### Value:  
+**mp**: a ggplot figure. to visualize it: print(mp).  
+
+#### Requirements:
+ggplot2 (Wckham & Chang,2016)
+
+#### References:  
+Wickham, H., Chang, W. (2016). ggplot2: Create Elegant Data Visualisations Using the Grammar of Graphics. URL: http://ggplot2.tidyverse.org, https://github.com/tidyverse/ggplot2 .  
+
+#### See also:  
+
+
+```{r Station Map function, message=FALSE,echo=FALSE}
+station_map <- function(lat,lon,name,save = NULL) {
+  
+  mp <- NULL
+  mapWorld <- borders("world", colour="gray50", fill="gray50") # create a layer of borders
+  mp <- ggplot() +   mapWorld
+  #Now Layer the station
+  mp <- mp+ geom_point(aes(x=lon, y=lat) ,color="red", size=1.5) +
+    ggtitle(paste("Working Station",name)) + 
+    labs(y="Latitude(°)", x = "Longitude(°)")
+  if (is.null(save)){
+  }else ggsave(sprintf("%s_map.png",name), plot = mp, device = "png", path = save)
+  return(mp)
+}
+```

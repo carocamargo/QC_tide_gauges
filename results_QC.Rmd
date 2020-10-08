@@ -1,0 +1,1304 @@
+---
+title: "Results_graphs"
+author: "Carolina Camargo"
+date: "April 29, 2018"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+rm(list=ls()) 
+# knitr::opts_chunk$set(fig.width=18, fig.height=18) 
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(grid)
+library(timeDate)
+```
+
+```{r hourly_filter, echo=FALSE}
+hourly_filter <- function(v,t,zone="GMT"){
+  # Function that filter data with frequency higher than one hour (minutes), to a hourly value.
+  # The hourly value is the median of the values within that hour. 
+  # Returns a regular hourly grid for the time period given. Allows for NAs in the initial grid.
+  # If there is an hour without data, in the output this hour will have NA. 
+  
+  # make working data frame
+  y<- data.frame(Time=t,Level=v)
+  # Remove NAs
+  y<- dplyr::filter(y,is.na(Level)==F)
+  
+  # Get the median every hour
+  
+  y$hour <- as.POSIXct(format(y$Time,"%Y-%m-%d %H:00"),tz=zone)
+  hy <- y %>%
+    dplyr::group_by(hour) %>%
+    dplyr::summarise(Level=median(Level,order_by=Time))
+  hy<-dplyr::rename(hy,Time=hour)
+  
+  ## Making regular hourly grid for the time given
+  # Geting the first and last date
+  sdate <-as.character(y$Time[1])
+  fdate <-as.character(tail(y$Time,1))
+  
+  #Remove the hours
+  pstart <- substr(sdate,0,10)
+  pfinal <- substr(fdate,0,10)
+  
+  # Make sure it will start at 00:00:00 and finish at 23:00:00
+  start<-paste(pstart,"00:00:00",sep=" ")
+  end  <-paste(pfinal,"23:00:00",sep=" ")
+  
+  # Create the regular grid
+  reggrid<-timeDate::timeSequence(from = start, to = end,by="hour",FinCenter = zone)
+  hgrid<- data.frame(Time=reggrid)
+  hgrid<-dplyr::rename(hgrid,Time = GMT.x..i..)
+  
+  
+  hdata <- dplyr::full_join(hgrid,hy,by="Time")
+  
+  return(hdata)
+}
+
+```
+
+## 1. Algorithms Description Table
+
+Algorithm| Description
+---------| -------------
+1       | All sub-modules and filters on
+2       | All sub-modules on, Global Outlier filter off in Outlier Sub-module
+3       | Breakpoint sub-module off
+4       | Stability sub-module off 
+5       | Outlier sub-module off
+6       | Speed of change sub-module off
+7       | Spike sub-module off
+8       | Only Stability sub-module on
+9       | Only Outlier sub-module on, with 3 filters on
+10      | Only Speed of Change sub-module on
+11      | Only Spike sub-module on, with 2 filters on
+12      | Only Outlier sub-module on, with Global Outlier filter off
+13      | Only Outlier sub-module on, with only Outlier_gloss filter on
+14      | Only Outlier sub-module on, with only Out-of-range filter on
+15      | Only Outlier sub-module on, with only Global Outlier filter on
+16      | Only Spike sub-module on, with only Median Filter on
+17      | Only Spike sub-module on, with only Spline Filter on
+The same algorithms were calculated according to the lunar cycle instead of calendar months. For the calendar month, the algorithms are represented with the letter **A** in front of the number, and with the letter **B** for the calculations made according to the lunar cycle. In total, 34 algorithms were calculated. When only one sub-module or filter is mentioned to be off (e.g. algorithm 3), it means that all the other sub-modules or filters were on.
+
+```{r Perc_Removed, echo=FALSE, fig.width=22, fig.height=18}
+load("Tab1.Rda") # Number of removed data
+load('Tab3.Rda')
+
+end<-NCOL(Tab1)
+
+per <- Tab1[,2:end]
+raw <-Tab1[,1]
+perc <- round((per/raw)*100,2) #making a percentage of the raw data
+
+cal<-perc[,1:17]
+lun<-perc[,18:34]
+
+# FIRST PANEL: Beno_rad, nouau_rad,pumo2_rad,pumo2_prs
+stations<-rownames(Tab1)
+st<-which(stations=="beno_rad"| stations=="noua_rad" | stations=="pumo2_rad"| stations=="pumo2_prs")
+
+sel<-cal[st,]
+
+algm = rep(colnames(sel),each=NROW(sel)) 
+station = rep(rownames(sel),NCOL(sel))
+value=c(sel[,])
+data=data.frame(algm, station, value)
+data$algm<- factor(data$algm,levels=colnames(sel))
+data<-arrange(data,by=algm)
+
+p1<- ggplot(data, aes(fill=station, y=value, x=algm,factor=algm)) + 
+    geom_bar(position="dodge", stat="identity")+
+    theme(legend.title=element_text(size=20, face ="bold"),
+          legend.text=element_text(size=20, face = "bold")) +
+    labs(y="% Removed", x = "") +
+  theme(axis.text=element_text(size=20,face="bold"),
+        axis.title=element_text(size=20,face="bold"))
+
+# SECOND PANEL: mata_prs, mata_rad, abas_rad, abur_rad wake_pwl
+
+st<-which(stations=="mata_prs"| stations=="mata_rad" | stations=="abas_rad"| stations=="wake2_pwl"| stations=="geor_rad")
+
+sel<-cal[st,]
+
+algm = rep(colnames(sel),each=NROW(sel)) 
+station = rep(rownames(sel),NCOL(sel))
+value=c(sel[,])
+data=data.frame(algm, station, value)
+data$algm<- factor(data$algm,levels=colnames(sel))
+data<-arrange(data,by=algm)
+
+p2<- ggplot(data, aes(fill=station, y=value, x=algm,factor=algm)) + 
+    geom_bar(position="dodge", stat="identity")+
+    theme(legend.title=element_text(size=20, face ="bold"),
+          legend.text=element_text(size=20, face = "bold")) +
+    theme(plot.title = element_text(hjust = 0.5, size = 20,face = "bold") ) +
+    labs(y="% Removed", x = "") +
+    theme(axis.text=element_text(size=20,face="bold"),
+        axis.title=element_text(size=20,face="bold"))
+
+ grid.arrange(p1,p2,nrow=2,ncol=1,
+               top=grid::textGrob("% Removed",gp=gpar(fontsize=25,face="bold")))
+``` 
+
+
+The graph above illustrates the efficiency of each algorithm, in function of the percentage of data removed by each algorithm. To be sure that the data being removed by the algorithm is actually bad data, visual inspection is necessary. The sensor rad from station beno was offline for the entire year of 2017, however the sensor was still sending a constant signal (always 9.25) to the server, which was not detected as a mal-function. The QC module is very efficient in detecting this mal-function. By analysing the pink bar in the top panel of the figure, it becomes clear that the module responsible for this detection is the Stability Check: 100% of the data is removed whenever the stability filter is on (A1, A2, A3, A5, A6, A7, A8); however, when this filter is off, algorithm A4, 0.31% is removed from the data. The graph also makes it clear that algorithm A16, which was the result of only applying only the Spike Module with the Median Test, is clearly faulty and is removing correct data. The bars also highlight the efficiency of the outlier and speed of change checks: in algorithm 5 and 6, when the outlier and speed of change checks are off, the percentage of bad data detected reduces in average to 6 and 8%, respectively.  
+
+
+```{r Efficiencies, echo=FALSE,fig.width=15, fig.height=15}
+ ### Finding mean efficiencies - A1 as reference
+cal<-perc[,1:17]
+# Removing bass-prs and beno_rad:
+ cal=cal[-c(9,13),]
+ out<-data.frame(cal[,c(1,5)])
+ st <-data.frame(cal[,c(1,4)])
+ sp <-data.frame(cal[,c(1,7)])
+ sc <-data.frame(cal[,c(1,6)])
+ bp <-data.frame(cal[,c(1,3)])
+ go <-data.frame(cal[,c(1,2)])
+ eff=data.frame(A1=out$A1,out=out$A1-out$A5,st=st$A1-st$A4,
+                sp=sp$A1-sp$A7,sc=sc$A1-sc$A6,bp=bp$A1-bp$A3,
+                go=go$A1-go$A2)
+ 
+# summary(eff)
+ 
+ 
+eff<-eff[,-c(1,2,5)]
+xrange<- seq(1,nrow(eff),by=1)
+stations<-rownames(cal)
+yrange<- seq(min(eff),max(eff),length.out = nrow(eff))
+
+# PLOT
+par(mfrow=c(2,1)) # all plots on one page
+ plot(xrange, yrange, type="n", xlab="",
+  	ylab=" A1 - Algorithm" ,xaxt="n",cex.lab=1.5, cex.axis=1.5, cex.main=2.25, cex.sub=1.5)
+#axis(1,at=xrange,labels=stations)
+axis(1, at=xrange, labels = FALSE)
+text(xrange, par("usr")[3] - 0.2, cex=1.25,
+     labels = stations, srt = 45, pos = 2, xpd = TRUE)
+colors <- rainbow(ncol(eff)) 
+linetype <- c(1:ncol(eff)) 
+plotchar <- seq(18,18+ncol(eff),1)
+
+# add lines 
+for (i in 1:ncol(eff)) { 
+  tree <- eff[,i] 
+  lines(tree, type="b", lwd=2,
+    lty=linetype[i], col=colors[i], pch=plotchar[i]) 
+} 
+# add a title and subtitle 
+title(" Efficiency Proxy- \nSub-modules")
+
+# add a legend 
+legend("topright",horiz = T, 
+       #1:ncol(eff), 
+       cex=1.5, col=colors,
+  	pch=plotchar, lty=linetype, legend=c(colnames(eff)))
+
+### LOOKING AT OUTLIER SUB-MOD
+cal<-perc[,1:17]
+ go <-data.frame(cal[,c(1,2)])
+  go$eff=go$A1-go$A2
+  gomean<- mean(go$eff)
+  
+out<-data.frame(cal[,c(9,12,13,14,15)])
+  
+eff=data.frame(go_off=out$A9-out$A12,
+               go=out$A9-out$A15,og=out$A9-out$A13,
+               or=out$A9-out$A14)
+ 
+# summary(eff)
+ 
+# lun<-perc[,1:17]
+#   go <-data.frame(lun[,c(1,2)])
+#   go$eff=go$A1-go$A2
+#   gomean<- mean(go$eff)
+# out<-data.frame(lun[,c(9,12,13,14,15)])
+  
+eff=data.frame(go_off=out$A9-out$A12,
+               go=out$A9-out$A15,og=out$A9-out$A13,
+               or=out$A9-out$A14)
+ 
+ summary(eff)
+
+xrange<- seq(1,nrow(eff),by=1)
+stations<-rownames(cal)
+yrange<- seq(min(eff),max(eff),length.out = nrow(eff))
+
+# PLOT
+    #####
+plot(xrange, yrange, type="n", xlab="",
+  	ylab=" A9- Algorithms" ,xaxt="n",
+  	cex.lab=1.5, cex.axis=1.5, cex.main=2.25, cex.sub=1.5)
+#axis(1,at=xrange,labels=stations)
+axis(1, at=xrange, labels = FALSE)
+text(xrange, par("usr")[3] - 0.2, cex=1.25,
+     labels = stations, srt = 45, pos = 2, xpd = TRUE)
+colors <- rainbow(ncol(eff)) 
+linetype <- c(1:ncol(eff)) 
+plotchar <- seq(18,18+ncol(eff),1)
+
+# add lines 
+for (i in 1:ncol(eff)) { 
+  tree <- eff[,i] 
+  lines(tree, type="b", lwd=2,
+    lty=linetype[i], col=colors[i],
+    pch=plotchar[i]) 
+} 
+# add a title and subtitle 
+title("Outlier Sub-module")
+
+# add a legend 
+legend("topright", horiz = T,
+       #1:ncol(eff), 
+       cex=1.5, col=colors,
+  	pch=plotchar, lty=linetype, legend=c(colnames(eff)))
+
+```
+  
+The efficiency of the other sub-modules are not so graphically clear. However, by considering algorithm 1, that had all modules and filters on, as the best treatment, it is possible to estimate the effiency of the others combinations by comparing the others algorithms to A1. 
+
+Although their contribuing percentage is small, an average of 0.2, 0.1 and 0.5% for the stability, spike and breakpoint modules,respectively, the final outcome is better when those modules are on. The figure above also shows that the breakpoint module in some cases can lead to a smaller number of points rejected by the QC. This happens specially in stations where tsunamis and storm surges are more frequenty. However, increasing the number of rejected points does not necessarily means that the sub-module is not performing well, since it is possible that it is avoiding false-negative points. In such cases, visual inspection of the data is necessary to make a proper evaluation.  
+The second algorithm to be tested was with the Global Outlier filter off, because before introducing the Breakpoint module, this filter was returning several false-negatives, i.e., it was removing points that were actually data. But after the introduction of the BP module, this was fixed. On the other hand, the use of this filter does not impact much the result, because the other filters of the sub-module are able to detect the same outliers.
+
+The outlier module is composed by three filters: Global Outlier, Outlier Gloss, and Out-of-Range. The plot above shows the effiencies of each filter in relation to when the three filters were on. The red losangle indicates the algorithm when only the global outlier filter was off. Using the three filters or only the two lasts give the exact same outcome. The green, blue and purple symbols indicates the algorithms when only one of the filters were on. Courisly, the deviation from using all filters and only using one of them, is always the same, no matter which filter is being compared.  
+
+
+```{r Amplitude,echo=FALSE, fig.width=22, fig.height=18}
+load('Tab3.Rda')
+
+calamp<-Tab3[,1:8]
+lunamp<-Tab3[,c(1,18:24)]
+# remove beno_rad
+calamp<-calamp[-13,]
+lunamp<-lunamp[-13,]
+
+stations<-rownames(calamp)
+wanted<-which(stations=="abas_rad"| stations=="wake2_pwl" | stations=="pumo2_rad"| stations=="geor_prs")
+
+#sel4<-calamp[wanted,]
+
+  m<-round(nrow(calamp)/4)
+  # for (i in 1:6){
+  # if (i>=m){ 
+  #   k=i-1
+  #   k=k*4
+  #   j=i-2
+  #   j=(4*j)+1
+  #   sel4<-calamp[j:k,]
+  # }else{    
+  #   j=3*i
+  #     if(i==1){
+  #         sel4<-calamp[i:j,] 
+  #     }else{
+  #         k=i-1
+  #         k=(k*3)+1
+  #         sel4<-calamp[k:j,]
+  #   }}
+for(i in 1:3){
+  if (i==1){ sel4<-calamp[1:7,]}
+  if (i==2){ sel4<-calamp[8:14,]}
+  if (i==3){ sel4<-calamp[15:22,]}
+algm = rep(colnames(sel4),each=NROW(sel4)) 
+station = rep(rownames(sel4),NCOL(sel4))
+value=c(sel4[,])
+data=data.frame(algm, station, value)
+data$algm<- factor(data$algm,levels=colnames(sel4))
+data<-arrange(data,by=algm)
+
+g<- ggplot(data, aes(fill=station, y=value, x=algm,factor=algm)) + 
+    geom_bar(position="dodge", stat="identity")+
+    theme(plot.title = element_text(hjust = 0.5, size = 20,face = "bold") ) +
+    labs(y="Amplitude (m)", x = "") +
+    theme(legend.title=element_text(size=20, face ="bold"),
+          legend.text=element_text(size=20, face = "bold")) +
+    theme(axis.text=element_text(size=20,face="bold"),
+          axis.title=element_text(size=20,face="bold"))
+    nam <- paste("pc", i, sep = "")
+    assign(nam, g)
+  }
+   grid.arrange(pc1,pc2,pc3,nrow=3,ncol=1,
+               top=textGrob("Amplitude - Calendar",gp=gpar(fontsize=25,face="bold")))
+
+sel4=calamp[15,c(1,2,4)]
+algm = c("Raw","QC","QC-BP")
+station = c("Mata enc")
+value=c(sel4[])
+data=data.frame(algm, station, value)
+data$algm<- factor(data$algm,levels=algm)
+data<-arrange(data,by=algm)
+
+g<- ggplot(data, aes(fill=station, y=value, x=algm,factor=algm)) + 
+    geom_bar(position="dodge", stat="identity")+
+    theme(plot.title = element_text(hjust = 0.5, size = 15,face = "bold") ) +
+    labs(y="Amplitude (m)", x = "") +
+    theme(legend.title=element_text(size=15, face ="bold"),
+          legend.text=element_text(size=15, face = "bold")) +
+    theme(axis.text=element_text(size=15,face="bold"),
+          axis.title=element_text(size=15,face="bold"))
+    nam <- paste("pc", i, sep = "")
+    assign(nam, g)
+
+   grid.arrange(pc1,pc2,pc3,nrow=3,ncol=1,
+               top=textGrob("Amplitude - Calendar",gp=gpar(fontsize=25,face="bold")))
+``` 
+
+Another good way of evaluating the algorithms is by looking at the mean amplitude of the sea level after the QC treatment. It is clear that all treatments are quite efficienty in removing the extreme values, which result in an amplitude of 80 meters. The figure above also highlights the stations that were sending a stable signal through out the year:the sensor bub in station Acaj and the sensor prs in station Bass have an amplitude of 0 meters, because the same value was sent all the time. By looking at the amplitude, it is also noticeble the importance of the breakpoint module. The sensor senc in station Mata had a strong signal fluctuation,as shown in the figure below. For the first months of 2017, the sea level curve was centered at 16 meters, with amplitude of 1.3 meters; but after July of 2017, the curve was centered around 6 meters, with amplitude of 1.4 meters.
+
+```{r Mata, echo=FALSE,message=F}
+
+load('mata_enc_A1.Rda')
+first<-A$xQC$Level_orig[1:4600]
+secon<-A$xclean$Level[53020:nrow(A$xclean)]
+lwl1<-min(first,na.rm=T)
+lwl2<-min(secon,na.rm=T)
+hwl1<-max(first,na.rm=T)
+hwl2<-max(secon,na.rm=T)
+amp1<-abs(hwl1-lwl1)
+amp2<-abs(hwl2-lwl2)
+
+origlow<-min(A$xQC$Level_orig,na.rm=T)
+finlow<-min(A$xclean$Level,na.rm=T)
+origup<-max(A$xQC$Level_orig,na.rm=T)
+finyp<-max(A$xclean$Level,na.rm=T)
+
+ylow<-min(origlow,finlow)
+yup<-max(origup,finyp)
+
+x<-data.frame(Time=A$xQC$Time,Levelorig=A$xQC$Level_orig,Level_clean=A$xQC$Level_clean)
+
+    p<- ggplot(x, aes(x = Time, y= value)) +
+      geom_point(aes(y=x$Levelorig),size=0.5, color = "grey") +
+      ylim  (ylow,yup)+
+      geom_point(aes(y = Level_clean),size=0.5,color = "aquamarine4") +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Mata enc - 2017")+
+      scale_colour_manual("legend", values = c( "grey", "aquamarine4"),
+                          labels=c("original","clean")) 
+
+    print(p)
+
+    
+```
+  
+  This problem is amplified (becomes more serious), when we consider the full data set:
+```{r Matafull, echo=FALSE,message=F}
+setwd("D:/Claudio/Documents/Oceans&Lakes/Thesis/Data/tide/")
+load('mata_enc_A1.Rda')
+first<-A$xQC$Level_orig[1:4600]
+secon<-A$xclean$Level[53020:nrow(A$xclean)]
+lwl1<-min(first,na.rm=T)
+lwl2<-min(secon,na.rm=T)
+hwl1<-max(first,na.rm=T)
+hwl2<-max(secon,na.rm=T)
+amp1<-abs(hwl1-lwl1)
+amp2<-abs(hwl2-lwl2)
+
+origlow<-min(A$xQC$Level_orig,na.rm=T)
+finlow<-min(A$xclean$Level,na.rm=T)
+origup<-max(A$xQC$Level_orig,na.rm=T)
+finyp<-max(A$xclean$Level,na.rm=T)
+
+ylow<-min(origlow,finlow)
+yup<-max(origup,finyp)
+
+x<-data.frame(Time=A$xQC$Time,Levelorig=A$xQC$Level_orig,Level_clean=A$xQC$Level_clean)
+
+    p<- ggplot(x, aes(x = Time, y= value)) +
+      geom_point(aes(y=x$Levelorig),size=0.5, color = "grey") +
+      ylim  (ylow,yup)+
+      geom_point(aes(y = Level_clean),size=0.5,color = "aquamarine4") +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Mata enc - Full data set")+
+      scale_colour_manual("legend", values = c( "grey", "aquamarine4"),
+                          labels=c("original","clean")) 
+
+    print(p)
+
+    
+```
+
+### Calendar X Lunar  
+
+```{r CalXLun, echo=FALSE,fig.width=15, fig.height=15}
+cal<-perc[,1:17]
+lun<-perc[,18:34]
+
+diff=cal[,1:7]-lun[,1:7]
+
+# Getting the amplitude tables, without the raw data
+calamp<-Tab3[,2:8]
+lunamp<-Tab3[,19:25]
+diff2=calamp-lunamp
+
+#summary(diff2)
+
+xrange<- seq(1,nrow(diff),by=1)
+stations<-rownames(cal)
+yrange<- seq(min(diff),max(diff),length.out = nrow(diff))
+xrange2<- seq(1,nrow(diff2),by=1)
+stations2<-rownames(calamp)
+yrange2<- seq(min(diff2,na.rm=T),max(diff2,na.rm=T),length.out = nrow(diff2))
+
+# PLOT
+par(mfrow=c(2,1))
+plot(xrange, yrange, type="n", xlab="",
+  	ylab="Calendar - Lunar" ,xaxt="n",
+  	 	cex.lab=1.5, cex.axis=1.5, cex.main=2.25, cex.sub=1.5)
+#axis(1,at=xrange,labels=stations)
+axis(1, at=xrange, labels = FALSE)
+text(xrange, par("usr")[3] - 0.2, cex=1.25,
+     labels = stations, srt = 45, pos = 2, xpd = TRUE)
+colors <- rainbow(ncol(diff)) 
+#linetype <- c(1:ncol(diff)) 
+plotchar <- seq(18,18+ncol(diff),1)
+
+# add lines 
+for (i in 1:ncol(diff)) { 
+  tree <- diff[,i] 
+  lines(tree, type="b", lwd=2,
+    lty=1, 
+    col=colors[i], pch=plotchar[i]) 
+} 
+# add a title and subtitle 
+title("Lunar X Calendar \nPercentage Removed")
+
+# add a legend 
+legend("bottomright",ncol=2,horiz = F, 
+       #1:ncol(diff), 
+       cex=1.5, col=colors,
+  	pch=plotchar, lty=linetype, legend=c(colnames(diff)))
+
+plot(xrange2, yrange2, type="n", xlab="",
+  	ylab="Calendar - Lunar" ,xaxt="n",
+  	 	cex.lab=1.5, cex.axis=1.5, cex.main=2.25, cex.sub=1.5)
+#axis(1,at=xrange,labels=stations)
+axis(1, at=xrange2, labels = FALSE)
+text(xrange2, par("usr")[3] - 0.2, cex=1.25,
+     labels = stations2, srt = 45, pos = 2, xpd = TRUE)
+colors <- rainbow(ncol(diff2)) 
+linetype <- c(1:ncol(diff2)) 
+plotchar <- seq(18,18+ncol(diff2),1)
+
+# add lines 
+for (i in 1:ncol(diff2)) { 
+  tree <- diff2[,i] 
+  lines(tree, type="b", lwd=2,
+    #lty=linetype[i], 
+    col=colors[i], pch=plotchar[i]) 
+} 
+# add a title and subtitle 
+title("Amplitude")
+
+# add a legend 
+legend("bottomright",ncol=2,horiz = F, 
+       #1:ncol(diff), 
+       cex=1.5, col=colors,
+  	pch=plotchar, lty=linetype, legend=c(colnames(diff2)))
+
+```
+
+
+The graph above shows the difference between computating the QC in relation to the lunar phases and in relation to clanedar months. The discrepancy is higher when looking at the percentage of data removed (upper panel) in comparison to the amplitude (lower panel). The divergence between the algorithms will also depend on the station itself: If the station has a wide tidal range, and the differences between spring and neap tide are large, then using lunar phases instead of calendar months will have a more significant impact in the result of the QC.
+The main source of variation is the Outlier module. As shown in the figure above, when such module is off (algorithm 5) there is no discrepancy between the lunar or calendar months. Surprisingly, the disparity is stronger in algorithm 3 and 6, which had only the Stability Check and Speed of Change off,respectively, than in algorithm 1, which had all modules and filters on. Only by visual inspection is possible to see which algorithm is better. The figure below is an example of the difference between Calendar and Lunar. Being green the calendar and red Lunar:
+
+```{r pumo1,echo=FALSE,message=F, fig.width=22, fig.height=18}
+load('pumo2_prs_A1.Rda')
+cal<-A
+load('pumo2_prs_A18.Rda')
+lun<-A
+
+A1<-data.frame(Time=cal$xQC$Time,Level=cal$xQC$Level_clean)
+B1<-data.frame(Time=lun$xQC$Time,Level=lun$xQC$Level_clean)
+
+ dtAb <- filter(A1, Time>"2017-10-05 00:00:00" & 
+                       Time<"2017-10-06 00:00:00")
+ dtBb <- filter(B1, Time>"2017-10-05 00:00:00" & 
+                       Time<"2017-10-06 00:00:00")
+
+   g1<- ggplot(dtAb,aes(x=Time,y=value))+
+      geom_point(aes(y=dtAb$Level),size=1.5, color = "aquamarine4") +
+      geom_point(aes(y=dtBb$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+   
+# Hourly Filter
+A<-hourly_filter(v=A1$Level,t=A1$Time)
+B<-hourly_filter(v=B1$Level,t=B1$Time)
+ dtA <- filter(A, Time>"2017-10-05 00:00:00" & 
+                       Time<"2017-10-06 00:00:00")
+ dtB <- filter(B, Time>"2017-10-05 00:00:00" & 
+                       Time<"2017-10-06 00:00:00")
+
+   g2<- ggplot(dtA,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA$Level),size=1.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+   
+grid.arrange(g1,g2,nrow=2,ncol=1,
+            top=grid::textGrob("Calendar X Lunar",gp=gpar(fontsize=25,face="bold")))
+
+
+```
+
+```{r pumo,echo=FALSE,message=F, fig.width=22, fig.height=18}
+load('pumo2_prs_A1.Rda')
+cal<-A
+load('pumo2_prs_A18.Rda')
+lun<-A
+
+A1<-data.frame(Time=cal$xQC$Time,Level=cal$xQC$Level_clean)
+B1<-data.frame(Time=lun$xQC$Time,Level=lun$xQC$Level_clean)
+
+septA<-filter(A1,Time>"2017-09-10 00:00:00" & Time<"2017-10-09 00:00:00")
+septB<-filter(B1,Time>"2017-09-10 00:00:00" & Time<"2017-10-09 00:00:00")
+ind=nrow(septA)/4
+i=1
+ dtAb <- slice(septA, 1:ind)
+ dtBb <- slice(septB, 1:ind)
+
+   g<- ggplot(dtAb,aes(x=Time,y=value))+
+      geom_line(aes(y=dtAb$Level),size=0.5, color = "aquamarine4") +
+      geom_line(aes(y=dtBb$Level),size=0.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+    nam <- paste("pp", i, sep = "")
+    assign(nam, g)
+i=2
+  j=i-1
+  dtA2b <-slice(septA, (ind*j):(ind*i))
+  dtB2b <-slice(septB, (ind*j):(ind*i))
+  g<- ggplot(dtA2b,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA2b$Level),size=0.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB2b$Level),size=0.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+      nam <- paste("pp", i, sep = "")
+    assign(nam, g)
+i=3
+  j=i-1
+  dtA3b <-slice(septA, (ind*j):(ind*i))
+  dtB3b <-slice(septB, (ind*j):(ind*i))
+  g<- ggplot(dtA3b,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA3b$Level),size=0.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB3b$Level),size=0.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+      nam <- paste("pp", i, sep = "")
+    assign(nam, g)
+i=4
+  j=i-1
+  dtA4b <-slice(septA, (ind*j):(ind*i))
+  dtB4b <-slice(septB, (ind*j):(ind*i))
+  g<- ggplot(dtA4b,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA4b$Level),size=1.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB4b$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+      nam <- paste("pp", i, sep = "")
+    assign(nam, g)
+    
+  #   for (i in 1:4){
+  # ind=nrow(septA)/5
+  # j=i-1
+  # if(i==1){   dtA <- slice(septA, 1:ind)
+  #             dtB <- slice(septB, 1:ind)
+  # }else{ 
+  #       dtA <-slice(septA, (ind*j):(ind*i))
+  #        dtB <-slice(septB, (ind*j):(ind*i))
+  #        }
+  # g<- ggplot(dtA,aes(x=Time,y=value))+
+  #     geom_line(aes(y=dtA$Level),size=0.5, color = "aquamarine4") +
+  #     geom_line(aes(y=dtB$Level),size=0.5, color = "firebrick") +    
+  #     xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+  #     scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+  #                         labels=c("Calendar","Lunar")) 
+  #     nam <- paste("p", i, sep = "")
+  #   assign(nam, g)
+  # }
+grid.arrange(pp1,pp2,pp3,pp4,nrow=4,ncol=1,
+            top=grid::textGrob("Calendar X Lunar",gp=gpar(fontsize=25,face="bold")))
+```
+
+Checking with hourly values:   
+```{r pumo2,echo=FALSE,message=F, fig.width=22, fig.height=18}
+load('pumo2_prs_A1.Rda')
+cal<-A
+load('pumo2_prs_A18.Rda')
+lun<-A
+
+A1<-data.frame(time=cal$xQC$Time,level=cal$xQC$Level_clean)
+B1<-data.frame(time=lun$xQC$Time,level=lun$xQC$Level_clean)
+A<-hourly_filter(v=A1$level,t=A1$time)
+B<-hourly_filter(v=B1$level,t=B1$time)
+
+septA<-filter(A,Time>"2017-09-10 00:00:00" & Time<"2017-10-09 00:00:00")
+septB<-filter(B,Time>"2017-09-10 00:00:00" & Time<"2017-10-09 00:00:00")
+
+ind=nrow(septA)/5
+i=1
+ dtA <- slice(septA, 1:ind)
+ dtB <- slice(septB, 1:ind)
+  g<- ggplot(dtA,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA$Level),size=1.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+    nam <- paste("p", i, sep = "")
+    assign(nam, g)
+i=2
+  j=i-1
+  dtA2 <-slice(septA, (ind*j):(ind*i))
+  dtB2 <-slice(septB, (ind*j):(ind*i))
+  g<- ggplot(dtA2,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA2$Level),size=1.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB2$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+      nam <- paste("p", i, sep = "")
+    assign(nam, g)
+i=3
+  j=i-1
+  dtA3 <-slice(septA, (ind*j):(ind*i))
+  dtB3 <-slice(septB, (ind*j):(ind*i))
+  g<- ggplot(dtA3,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA3$Level),size=1.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB3$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+      nam <- paste("p", i, sep = "")
+    assign(nam, g)
+i=4
+  j=i-1
+  dtA4 <-slice(septA, (ind*j):(ind*i))
+  dtB4 <-slice(septB, (ind*j):(ind*i))
+  g<- ggplot(dtA4,aes(x=Time,y=value))+
+      geom_line(aes(y=dtA4$Level),size=1.5, color = "aquamarine4") +
+      geom_line(aes(y=dtB4$Level),size=1.5, color = "firebrick") +    
+      xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+      scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+                          labels=c("Calendar","Lunar")) 
+      nam <- paste("p", i, sep = "")
+    assign(nam, g)
+    
+  #   for (i in 1:4){
+  # ind=nrow(septA)/5
+  # j=i-1
+  # if(i==1){   dtA <- slice(septA, 1:ind)
+  #             dtB <- slice(septB, 1:ind)
+  # }else{ 
+  #       dtA <-slice(septA, (ind*j):(ind*i))
+  #        dtB <-slice(septB, (ind*j):(ind*i))
+  #        }
+  # g<- ggplot(dtA,aes(x=Time,y=value))+
+  #     geom_line(aes(y=dtA$Level),size=0.5, color = "aquamarine4") +
+  #     geom_line(aes(y=dtB$Level),size=0.5, color = "firebrick") +    
+  #     xlab("Time ") + ylab("Level (m)") + labs(title="Pumo prs")+
+  #     scale_colour_manual("legend", values = c( "aquamarine4","firebrick"),
+  #                         labels=c("Calendar","Lunar")) 
+  #     nam <- paste("p", i, sep = "")
+  #   assign(nam, g)
+  # }
+grid.arrange(p1,p2,p3,p4,nrow=4,ncol=1,
+            top=grid::textGrob("Calendar X Lunar",gp=gpar(fontsize=25,face="bold")))
+```
+
+
+
+Geor_rad is a good example of the effiency of the modules:
+```{r georFLAG, echo=FALSE,message=FALSE, fig.width=22, fig.height=18}
+load('geor_prs_A1.Rda')
+ALL<-A
+load('geor_prs_A8.Rda')
+ST<-A
+load('geor_prs_A9.Rda')
+OUT<-A
+load('geor_prs_A10.Rda')
+SC<-A
+load('geor_prs_A11.Rda')
+SP<-A
+
+data <-data.frame(Time=ALL$xQC$Time,Level=ALL$xQC$Level_orig,FlagALL=ALL$xQC$Flag_final,
+                  FlagSC=SC$xQC$Flag_final,FlagSP=SP$xQC$Flag_final,FlagST=ST$xQC$Flag_final,FlagOUT=OUT$xQC$Flag_final)
+data<-filter(data,Time>"2017-10-01 00:00:00" & Time<"2017-10-30 00:00:00")
+     data <- mutate(data, ColALL = ifelse( FlagALL == 0, "out", "kept"))
+     data$ColALL <- factor(data$ColALL, levels = c("kept", "out"))
+     #
+     data <- mutate(data, ColSC = ifelse( FlagSC == 0, "out", "kept"))
+     data$ColSC <- factor(data$ColSC, levels = c("kept", "out"))
+     #
+     data <- mutate(data, ColSP = ifelse( FlagSP == 0, "out", "kept"))
+     data$ColSP <- factor(data$ColSP, levels = c("kept", "out"))
+     #
+     data <- mutate(data, ColST = ifelse( FlagST == 0, "out", "kept"))
+     data$ColST <- factor(data$ColST, levels = c("kept", "out"))
+     #
+     data <- mutate(data, ColOUT = ifelse( FlagOUT == 0, "out", "kept"))
+     data$ColOUT <- factor(data$ColOUT, levels = c("kept", "out"))
+
+    mp1<- ggplot(data, aes(x = Time, y= value)) +
+      geom_point(aes(y=Level,col=data$ColALL),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+    mp2<- ggplot(data, aes(x = Time, y= value)) +
+      geom_point(aes(y=Level,col=data$ColSP),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike Detection")
+    mp3<- ggplot(data, aes(x = Time, y= value)) +
+      geom_point(aes(y=Level,col=data$ColSC),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Speed of Change")
+    mp4<- ggplot(data, aes(x = Time, y= value)) +
+      geom_point(aes(y=Level,col=data$ColST),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Stability Check")
+    mp5<- ggplot(data, aes(x = Time, y= value)) +
+      geom_point(aes(y=Level,col=data$ColOUT),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Outlier Detection")
+
+ windows()
+    grid.arrange(mp1,mp2,mp3,mp4,mp5,ncol=1,nrow=5)
+
+```
+
+```{r geor, echo=FALSE,message=FALSE, fig.width=22, fig.height=18}
+load('geor_prs_A1.Rda')
+ALL<-A
+load('geor_prs_A8.Rda')
+ST<-A
+load('geor_prs_A9.Rda')
+OUT<-A
+load('geor_prs_A10.Rda')
+SC<-A
+
+data <-data.frame(Time=ALL$xQC$Time,Level=ALL$xQC$Level_orig,ALL=ALL$xQC$Level_clean,
+                  SC=SC$xQC$Level_clean,ST=ST$xQC$Level_clean,OUT=OUT$xQC$Level_clean)
+ylow=min(data[,2:ncol(data)],na.rm=T)
+yup=max(data[,2:ncol(data)],na.rm=T)
+
+    mp1<- ggplot(data, aes(x = Time, y= value)) +
+          geom_point(aes(y=data$Level),size=0.5, color = "grey") +
+          ylim  (ylow,yup)+
+          geom_point(aes(y=data$ALL),size=0.5, color = "aquamarine4")+
+          xlab("") + ylab("Level (m)") + labs(title="All")+
+          theme(legend.title=element_text(size=20, face ="bold"),
+                legend.text=element_text(size=20, face = "bold")) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20,face = "bold") ) +
+          theme(axis.text=element_text(size=20,face="bold"),
+                axis.title=element_text(size=20,face="bold"))
+ 
+
+    mp2<- ggplot(data, aes(x = Time, y= value)) +
+          geom_point(aes(y=data$Level),size=0.5, color = "grey") +
+          ylim  (ylow,yup)+
+          geom_point(aes(y=data$ST),size=0.5, color = "lightslateblue")+
+          xlab("") + ylab("Level (m)") + labs(title="Stability")+
+          theme(legend.title=element_text(size=20, face ="bold"),
+                legend.text=element_text(size=20, face = "bold")) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20,face = "bold") ) +
+          theme(axis.text=element_text(size=20,face="bold"),
+                axis.title=element_text(size=20,face="bold"))
+ 
+    
+    mp3<- ggplot(data, aes(x = Time, y= value)) +
+          geom_point(aes(y=data$Level),size=0.5, color = "grey") +
+          ylim  (ylow,yup)+
+          geom_point(aes(y=data$SC),size=0.5, color = "darkgoldenrod3")+
+          xlab("") + ylab("Level (m)") + labs(title="Speed of Change")+
+          theme(legend.title=element_text(size=20, face ="bold"),
+                legend.text=element_text(size=20, face = "bold")) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20,face = "bold") ) +
+          theme(axis.text=element_text(size=20,face="bold"),
+                axis.title=element_text(size=20,face="bold"))
+ 
+    
+    mp4<- ggplot(data, aes(x = Time, y= value)) +
+          geom_point(aes(y=data$Level),size=0.5, color = "grey") +
+          ylim  (ylow,yup)+
+          geom_point(aes(y=data$OUT),size=0.5, color = "firebrick")+
+          xlab("") + ylab("Level (m)") + labs(title="Outlier")+
+          theme(legend.title=element_text(size=20, face ="bold"),
+                legend.text=element_text(size=20, face = "bold")) +
+          theme(plot.title = element_text(hjust = 0.5, size = 20,face = "bold") ) +
+          theme(axis.text=element_text(size=20,face="bold"),
+                axis.title=element_text(size=20,face="bold"))
+ 
+    grid.arrange(mp1,mp2,mp3,mp4,ncol=2,nrow=2,
+               top=grid::textGrob("Geor rad - 2017",gp=gpar(fontsize=25,face="bold")))
+ 
+```
+
+Attempts to find a good example of Spike module:
+
+
+```{r abur,echo=FALSE}
+load('abur_rad_A1.Rda')
+ALL<-A
+load('abur_rad_A7.Rda')
+SP<-A
+ind=which(ALL$xQC$FlagSP==0)
+ind
+length(ind)
+
+data=data.frame(Time=ALL$xQC$Time,Levelorig=ALL$xQC$Level_orig,AL=ALL$xQC$Level_clean,
+                Sp=SP$xQC$Level_clean,FlagALL=ALL$xQC$Flag_final,FlagSP=SP$xQC$Flag_final)
+
+dt=slice(data[14500:17000,])
+head(dt)
+tail(dt)
+p<-ggplot(dt,aes(x=Time,y=value))+
+            geom_point(aes(y=dt$Levelorig),size=0.5, color = "grey") +
+            geom_point(aes(y=dt$AL),size=0.5, color = "aquamarine4")+
+          xlab("Time ") + ylab("Level (m)") + labs(title="All")
+p2<-ggplot(dt,aes(x=Time,y=value))+
+            geom_point(aes(y=dt$Levelorig),size=0.5, color = "grey") +
+            geom_point(aes(y=dt$Sp),size=0.5, color = "aquamarine4")+
+          xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+
+grid.arrange(p,p2,ncol=1,nrow=2)
+
+data <- mutate(data, ColALL = ifelse( FlagALL == 0, "out", "kept"))
+data$ColALL <- factor(data$ColALL, levels = c("kept", "out"))
+data <- mutate(data, ColSP = ifelse( FlagSP == 0, "out", "kept"))
+data$ColSP <- factor(data$ColSP, levels = c("kept", "out"))
+dt=slice(data[14500:17000,])
+
+    mp1<- ggplot(dt, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt$ColALL),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp2<- ggplot(dt, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt$ColSP),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp1,mp2,ncol=1,nrow=2)
+
+```
+
+```{r nice,echo=FALSE}
+setwd('/Claudio/Documents/Oceans&Lakes/Thesis/Data/summary') # FULL CLEAN SERIES
+load('nice2_rad_A1.Rda')
+ALL<-A
+data=data.frame(Time=ALL$xQC$Time,Levelorig=ALL$xQC$Level_orig,AL=ALL$xQC$Level_clean,
+                FlagALL=ALL$xQC$Flag_final,FlagSP=ALL$xQC$FlagSP)
+
+data <- mutate(data, ColALL = ifelse( FlagALL == 0, "out", "kept"))
+data$ColALL <- factor(data$ColALL, levels = c("kept", "out"))
+data <- mutate(data, ColSP = ifelse( FlagSP == 0, "out", "kept"))
+data$ColSP <- factor(data$ColSP, levels = c("kept", "out"))
+
+#dt=slice(data[51000:53000,])
+dt=slice(data[94000:10000,])
+dt=slice(data[2093000:2720000,])
+head(dt)
+tail(dt)
+dt2<-filter(data,Time>"2016-02-15 00:00:00" & Time<"2016-03-01 00:00:00")
+
+    mp1<- ggplot(dt, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt$ColALL),size = 1) +
+      ylim(-0.5,1)+
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp2<- ggplot(dt, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt$ColSP),size = 1) +
+      ylim(-0.5,1)+
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp1,mp2,ncol=1,nrow=2)
+
+    mp3<- ggplot(dt2, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt2$ColALL),size = 1) +
+      ylim(-0.5,1)+
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp4<- ggplot(dt2, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt2$ColSP),size = 1) +
+      ylim(-0.5,1)+
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp3,mp4,ncol=1,nrow=2)
+
+    dt3=slice(data[3481900:3482100,])
+    mp5<- ggplot(dt3, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt3$ColALL),size = 1) +
+      ylim(-0.5,1)+
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp6<- ggplot(dt3, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt3$ColSP),size = 1) +
+      ylim(-0.5,1)+
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp5,mp6,ncol=1,nrow=2)
+
+```
+
+```{r abas,echo=FALSE}
+setwd('/Claudio/Documents/Oceans&Lakes/Thesis/Data/newf/files') # FULL CLEAN SERIES
+load('abas_rad_A1.Rda')
+ALL<-A
+ind=which(ALL$xQC$FlagSP==0)
+
+data=data.frame(Time=ALL$xQC$Time,Levelorig=ALL$xQC$Level_orig,AL=ALL$xQC$Level_clean,
+                FlagALL=ALL$xQC$Flag_final,FlagSP=ALL$xQC$FlagSP)
+
+data <- mutate(data, ColALL = ifelse( FlagALL == 0, "out", "kept"))
+data$ColALL <- factor(data$ColALL, levels = c("kept", "out"))
+data <- mutate(data, ColSP = ifelse( FlagSP == 0, "out", "kept"))
+data$ColSP <- factor(data$ColSP, levels = c("kept", "out"))
+
+dt=slice(data[110214:341000,])
+dt2=slice(data[2503000:2505000,])
+dt3=slice(data[2502100:2945395,])
+
+    mp1<- ggplot(dt, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt$ColALL),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp2<- ggplot(dt, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt$ColSP),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp1,mp2,ncol=1,nrow=2)
+
+    mp3<- ggplot(dt2, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt2$ColALL),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp4<- ggplot(dt2, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt2$ColSP),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp3,mp4,ncol=1,nrow=2)
+
+    mp5<- ggplot(dt3, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt3$ColALL),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="All")
+
+    mp6<- ggplot(dt3, aes(x = Time, y= value)) +
+      geom_point(aes(y=Levelorig,col=dt3$ColSP),size = 1) +
+      scale_colour_manual("legend", values = c( "olivedrab", "firebrick"),labels=c("kept","out")) +
+      xlab("Time ") + ylab("Level (m)") + labs(title="Spike")
+    grid.arrange(mp5,mp6,ncol=1,nrow=2)
+
+```
+
+### A good example of Lunar X Calendar:
+```{r abas_lunxcal,echo=FALSE}
+load('abas_rad_A1.Rda')
+cal<-A
+load("abas_rad_A18.Rda")
+lun<-A
+
+data<-data.frame(Time=cal$xQC$Time,Levelorig=cal$xQC$Level_orig,
+                 Levelcal=cal$xQC$Level_clean,Levellun=lun$xQC$Level_clean)
+
+dt<-filter(data,Time>"2017-09-14 00:00:00" & Time<"2017-09-16 00:00:00")
+
+ylow=min(data[,2:ncol(data)],na.rm=T)
+yup=max(data[,2:ncol(data)],na.rm=T)
+
+mp1<- ggplot(dt, aes(x = Time, y= value)) +
+          geom_point(aes(y=dt$Levelorig),size=0.5, color = "grey") +
+          ylim  (ylow,yup)+
+          geom_point(aes(y=dt$Levelcal),size=0.5, color = "aquamarine4")+
+          xlab("Time ") + ylab("Level (m)") + labs(title="Calendar")
+mp2<- ggplot(dt, aes(x = Time, y= value)) +
+          geom_point(aes(y=dt$Levelorig),size=0.5, color = "grey") +
+          ylim  (ylow,yup)+
+          geom_point(aes(y=dt$Levellun),size=0.5, color = "aquamarine4")+
+          xlab("Time ") + ylab("Level (m)") + labs(title="Lunar")
+    grid.arrange(mp1,mp2,ncol=2,nrow=1)
+    
+mp3<- ggplot(dt, aes(x = Time, y= value)) +
+          ylim  (ylow,1)+
+          geom_point(aes(y=dt$Levelcal),size=0.5, color = "aquamarine4")+
+          xlab("Time ") + ylab("Level (m)") + labs(title="Calendar")
+mp4<- ggplot(dt, aes(x = Time, y= value)) +
+          ylim  (ylow,1)+
+          geom_point(aes(y=dt$Levellun),size=0.5, color = "lightslateblue")+
+          xlab("Time ") + ylab("Level (m)") + labs(title="Lunar")
+    grid.arrange(mp3,mp4,ncol=2,nrow=1)
+
+```
+   
+### Stacked plots:  
+```{r stacked_PLOTS, echo=FALSE}
+setwd('/Claudio/Documents/Oceans&Lakes/Thesis/Data/summary')
+load("mat_module.Rda") #mat
+
+load("mat_tide.Rda") #mat2
+rownames(mat)<-c("abas_rad","abur_rad","acaj_bub","acaj_prs","acaj_rad",
+                   "aden_pr1","aden_pr2","aden_rad","bass_prs","bass_rad",
+                   "beno_enc","beno_prs","beno_rad","geor_prs","geor_rad",
+                   "mata_enc","mata_prs","mata_rad","nice_rad","noua_rad",
+                   "pumo_prs","pumo_rad","wake_pwl")
+rownames(mat2)<-c("abas_rad","abur_rad","acaj_bub","acaj_prs","acaj_rad",
+                   "aden_pr1","aden_pr2","aden_rad","bass_prs","bass_rad",
+                   "beno_enc","beno_prs","beno_rad","geor_prs","geor_rad",
+                   "mata_enc","mata_prs","mata_rad","nice_rad","noua_rad",
+                   "pumo_prs","pumo_rad","wake_pwl")
+colnames(mat)<-c("st","out","sp","sc","total")
+colnames(mat2)<-c("SST","SSR","SSE","Error")
+## MODULES
+total <-mat[,5]
+mat<-mat[,-5] # removing total column
+matp<-(mat/total)*100
+contr <- colSums(matp)
+meancontr<-contr/nrow(matp)
+meancontr
+dat <-data.frame(st=mat[,1],out=mat[,2],sp=mat[,3],sc=mat[,4])
+barplot(t(dat))
+
+cond = rep(colnames(mat),each=NROW(mat)) 
+station = rep(rownames(mat),NCOL(mat))
+value=c(mat[,])
+data=data.frame(station,cond, value)
+# Grouped
+ggplot(data, aes(fill=cond, y=value, x=station)) + 
+geom_bar(position="dodge", stat="identity")+
+    xlab("\nStation") +
+  ylab("Number removed data\n") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Stacked
+ggplot(data, aes(fill=cond, y=value, x=station)) + 
+#geom_bar( stat="identity")
+  geom_bar(stat="identity") +
+  xlab("\nStation") +
+  ylab("Number removed data\n") +
+  #guides(fill=FALSE) +  #REMOVES LEGEND
+  theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+# Stacked Percent
+ggplot(data, aes(fill=cond, y=value, x=station)) + 
+geom_bar( stat="identity", position="fill")+
+    xlab("\nStation") +
+  ylab("Number removed data\n") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+## TIDES
+
+cond = rep(colnames(mat2),each=NROW(mat2)) 
+station = rep(rownames(mat2),NCOL(mat2))
+value=c(mat2[,])
+data=data.frame(station,cond, value)
+# Grouped
+ggplot(data, aes(fill=cond, y=value, x=station)) + 
+geom_bar(position="dodge", stat="identity")+
+    xlab("\nStation") +
+  ylab("Source of Variation\n") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+# Stacked
+ggplot(data, aes(fill=cond, y=value, x=station)) + 
+#geom_bar( stat="identity")
+  geom_bar(stat="identity") +
+  xlab("\nStation") +
+  ylab("Source of Variation\n") 
+  #guides(fill=FALSE) +  #REMOVES LEGEND
+  theme_bw()+
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+# Stacked Percent
+ggplot(data, aes(fill=cond, y=value, x=station)) + 
+geom_bar( stat="identity", position="fill")+
+    xlab("\nStation") +
+  ylab("Source of Variation\n") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+```
+
+## TIDES
+
+```{r RMSE_tides, echo=FALSE, message=F}
+setwd("D:/Claudio/Documents/Oceans&Lakes/Thesis/Data/TIDE/")
+load('RMSE.Rda')
+load('RMSE1y.Rda')
+
+RMSE=RMSE[-9,]
+yrange=seq(min(RMSE,na.rm=T),max(RMSE,na.rm=T),length.out = nrow(RMSE))
+xrange=seq(1,nrow(RMSE),by=1)
+stations=row.names(RMSE)
+#windows()
+plot(xrange, yrange, type="n", xlab="",
+     ylab="RMSE" ,xaxt="n",
+     cex.lab=1.5, cex.axis=1.5, cex.main=2.25, cex.sub=1.5)
+axis(1, at=xrange, labels = FALSE)#stations, srt = 90)
+text(x = xrange, par("usr")[1] - 0.16, 
+     labels = stations, srt = 45, pos = 2, xpd = TRUE)
+colors <- c(1,1,1,3,3,3) 
+linetype <- c(1,1,1,3,3,3) 
+#plotchar <- seq(18,18+ncol(RMSE),1)
+plotchar <- c(15,17,19,15,17,19)
+# add lines 
+for (i in 1:ncol(RMSE)) { 
+  tree <- RMSE[,i] 
+  lines(tree, type="b", lwd=2,
+        lty=linetype[i], 
+        col=colors[i], pch=plotchar[i]
+        ) 
+} 
+# add a title and subtitle 
+title("Prediction Error","Prediction made with full data set")
+# add a legend 
+legend("topright",ncol=2,horiz = F, 
+       #1:ncol(diff), 
+       cex=1, col=colors,
+        pch=plotchar, 
+       lty=linetype, legend=c(colnames(RMSE)))
+
+
+RMSE1y=RMSE1y[-9,]
+RMSE1y[9,]=NA
+RMSE1y[19,]=NA
+plot(RMSE,RMSE1y, main="Prediction Error - 1 year of data X Full data set")
+
+data=data.frame(year=RMSE[,1],full=RMSE1y[,1])
+h7<-ggplot(data,aes(x=full))+
+    geom_point(aes(y=year))+
+    labs(title="h7")
+data=data.frame(year=RMSE[,2],full=RMSE1y[,2])
+h37<-ggplot(data,aes(x=full))+
+    geom_point(aes(y=year))+
+    labs(title="h37")
+data=data.frame(year=RMSE[,3],full=RMSE1y[,3])
+h60<-ggplot(data,aes(x=full))+
+    geom_point(aes(y=year))+
+    labs(title="h60")
+data=data.frame(year=RMSE[,4],full=RMSE1y[,4])
+h7o<-ggplot(data,aes(x=full))+
+    geom_point(aes(y=year))+
+    labs(title="h7")
+data=data.frame(year=RMSE[,5],full=RMSE1y[,5])
+h37o<-ggplot(data,aes(x=full))+
+    geom_point(aes(y=year))+
+    labs(title="h37")
+data=data.frame(year=RMSE[,6],full=RMSE1y[,6])
+h69<-ggplot(data,aes(x=full))+
+    geom_point(aes(y=year))+
+    labs(title="h69")
+grid.arrange(h7,h37,h60,
+             h7o,h37o,h69,ncol=2,nrow=3,
+              top=grid::textGrob("RMSE for different harmonics",gp=gpar(fontsize=25,face="bold")))
+
+
+RMSE1y=RMSE1y[-c(9,19),]
+yrange=seq(min(RMSE1y,na.rm=T),max(RMSE1y,na.rm=T),length.out = nrow(RMSE1y))
+xrange=seq(1,nrow(RMSE1y),by=1)
+stations=row.names(RMSE1y)
+plot(xrange, yrange, type="n", xlab="",
+     ylab="RMSE" ,xaxt="n",
+     cex.lab=1.5, cex.axis=1.5, cex.main=2.25, cex.sub=1.5)
+axis(1, at=xrange, labels = FALSE)#stations, srt = 90)
+text(x = xrange, par("usr")[1] - 0.28, 
+     labels = stations, srt = 45, pos = 2, xpd = TRUE)
+colors <- c(1,1,1,3,3,3) 
+linetype <- c(1,1,1,3,3,3) 
+#plotchar <- seq(18,18+ncol(RMSE),1)
+plotchar <- c(15,17,19,15,17,19)
+# add lines 
+for (i in 1:ncol(RMSE1y)) { 
+  tree <- RMSE1y[,i] 
+  lines(tree, type="b", lwd=2,
+        lty=linetype[i], 
+        col=colors[i], pch=plotchar[i]
+        ) 
+} 
+# add a title and subtitle 
+title("Prediction Error","Prediction made with only 1 year of data")
+# add a legend 
+legend("topright",ncol=2,horiz = F, 
+       #1:ncol(diff), 
+       cex=1, col=colors,
+        pch=plotchar, 
+       lty=linetype, legend=c(colnames(RMSE1y)))
+```
+
+The percentage of the the sea level explained by tides can be checked with the Sum of Squares Analysis:  
+SST = SSE + SSR  
+Where the SST is the sum of squares between yobs and mean(yobs),     
+SSE is the explained variation, i.e., how much of the variation is explained by the model (tides):  
+SSE = sum(yest - mean(yobs))  
+And SSR is the variation of residuals, which is not explained by the models:   
+SSR = sum(yobs - yest)
+
+Analysing the prediction made with the full data set, we have:  
+
+```{r SS, echo=FALSE,message=FALSE}
+setwd("D:/Claudio/Documents/Oceans&Lakes/Thesis/Data/TIDE/")
+load("SSE.Rda")
+load("SST.Rda")
+load("SSR.Rda")
+
+print(SST)
+print(SSE)
+print(SSR)
+
+print('The model could explain:
+      ')
+
+explained = (SSE*100)/SST
+explained
+
+print('The model could NOT explain:
+      ')
+
+notexplained = (SSR*100)/SST
+notexplained
+load("SSE1y.Rda")
+load("SST1y.Rda")
+load("SSR1y.Rda")
+```
+
+Analysing the prediction made with the 1 year of data, we have:  
+
+```{r SS1y, echo=FALSE,message=FALSE}
+setwd("D:/Claudio/Documents/Oceans&Lakes/Thesis/Data/TIDE/")
+load("SSE1y.Rda")
+load("SST1y.Rda")
+load("SSR1y.Rda")
+
+print(SST1y)
+print(SSE1y)
+print(SSR1y)
+
+print('The model could explain:
+      ')
+
+explained = (SSE1y*100)/SST1y
+explained
+
+print('The model could NOT explain:
+      ')
+
+notexplained = (SSR1y*100)/SST1y
+notexplained
+
+```
