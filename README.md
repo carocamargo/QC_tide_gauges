@@ -9,7 +9,7 @@ These scripts are results of a master thesis (see file 'Camargo2018_Manucript.pd
 In order to re-use it, we caution the user to read carefully the functions, and modify where necessary for own purposes.  
 
 # Files
-## functions.R
+## functions3.R
   R script with the functions used
 ## QCmodule.Rmd
   R-markdown file with the functions and descriptions used to do Quality Control of the data
